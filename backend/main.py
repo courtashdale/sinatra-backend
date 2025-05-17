@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, Depends, Query, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
@@ -25,6 +26,23 @@ app = FastAPI()
 
 IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
 BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
+
+# -- website
+origins = [
+    "http://localhost:5173",  # local dev
+    "https://sinatra.live",   # your custom domain
+    "https://sinatra.vercel.app",  # optional fallback
+]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 class ThemeSettings(BaseModel):
     user_id: str
@@ -620,10 +638,3 @@ def get_flat_user_genres(
         flat_genres.extend(genres)
 
     return {"genres": flat_genres}
-
-
-@app.get("/{full_path:path}", include_in_schema=False)
-def catch_all(full_path: str):
-    if IS_DEV:
-        return JSONResponse({"message": "No static files in dev. Use Vite on port 5173."})
-    return FileResponse("frontend/dist/index.html")
