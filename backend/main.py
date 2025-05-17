@@ -612,17 +612,3 @@ def get_flat_user_genres(
         flat_genres.extend(genres)
 
     return {"genres": flat_genres}
-
-if not IS_DEV:
-    app.mount("/assets", StaticFiles(directory="/backend/static/assets"), name="assets")
-
-@app.get("/{full_path:path}", include_in_schema=False)
-async def serve_frontend_catchall(request: Request, full_path: str):
-    if IS_DEV:
-        return JSONResponse({"message": "No static files in dev. Use Vite on port 5173."})
-
-    # Prevent serving index.html for API routes
-    if request.url.path.startswith("/api") or "." in full_path:
-        raise HTTPException(status_code=404, detail="Not Found")
-
-    return FileResponse("backend/static/index.html")
