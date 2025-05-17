@@ -109,6 +109,9 @@ def callback(code: str):
         },
         upsert=True,
     )
+    print("🧪 NODE_ENV:", os.getenv("NODE_ENV"))
+    print("🧪 IS_DEV:", IS_DEV)
+    print("🧪 Redirecting to:", BASE_URL)
     user = users_collection.find_one({"user_id": user_id})
     frontend_base = "http://localhost:5173" if IS_DEV else BASE_URL
     if user and user.get("onboarded"):
