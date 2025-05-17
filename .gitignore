@@ -11,4 +11,7 @@ venv/
 
 # Frontend static build
 backend/static/assets/
-tree.md
+tree.md__pycache__/
+*.egg-info
+*.egg-link
+.venv/
