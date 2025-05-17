@@ -10,11 +10,9 @@ import csv
 from pydantic import BaseModel
 
 # -- fastAPI
-from fastapi import FastAPI, Depends, Query, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Depends, Query, HTTPException
+from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
@@ -23,6 +21,7 @@ from backend.auth import get_token
 from backend.music import genre_wizard
 from backend.music.genreColours import META_GENRE_COLORS
 
+app = FastAPI()
 
 app.mount("/assets", StaticFiles(directory="backend/static/assets"), name="assets")
 
@@ -37,8 +36,6 @@ class ThemeSettings(BaseModel):
     font: str
     text_color: str
 
-
-app = FastAPI()
 sp_oauth = get_spotify_oauth()
 
 if not IS_DEV:
@@ -91,18 +88,13 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
 @app.get("/callback",tags=["routes"])
 def callback(code: str):
-    # Sets auth info
     token_info = sp_oauth.get_access_token(code)
     access_token = token_info["access_token"]
     refresh_token = token_info["refresh_token"]
     expires_at = token_info["expires_at"]
-
-    # Sets user data
     sp = spotipy.Spotify(auth=access_token)
     user_profile = sp.current_user()
     user_id = user_profile["id"]
-
-    # Logs user info from Spotify callback
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -129,18 +121,14 @@ def callback(code: str):
         return RedirectResponse(f"{frontend_base}/onboard?user_id={user_id}")
 
 @app.get("/recently-played", tags=["playback"])
-# Gets 5 recently played tracks if access token is valid
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
     sp = spotipy.Spotify(auth=access_token)
-    # Sets up genre cache
     artist_genre_cache = {}
 
     try:
         recent = sp.current_user_recently_played(limit=limit)
         simplified = []
-        # For each returned song item...
         for item in recent["items"]:
-            # Set the name to "track"
             track = item["track"]
             genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
 
@@ -195,8 +183,6 @@ def get_playback_state(
                     ),
                 },
             }
-
-            # Store current playback in DB
             users_collection.update_one(
                 {"user_id": user_id},
                 {"$set": {"last_played_track": track_data}},
@@ -204,7 +190,6 @@ def get_playback_state(
 
             return {"playback": track_data}
 
-        # No current playback, return last known
         user = users_collection.find_one({"user_id": user_id})
         return {"playback": user.get("last_played_track", False)}
 
@@ -235,7 +220,7 @@ def get_current_user(user_id: str = Query(...)):
         "email": user.get("email"),
         "profile_picture": user.get("profile_picture"),
         "important_playlists": user.get("important_playlists", []),
-        "genre_analysis": user.get("genre_analysis"),  # ← add this
+        "genre_analysis": user.get("genre_analysis"),
     }
 
 @app.get("/playlists", tags=["user"])
@@ -370,7 +355,6 @@ def complete_onboarding(data: dict):
             }
         )
 
-    # Save in user + public collection
     users_collection.update_one(
         {"user_id": data["user_id"]},
         {
@@ -388,16 +372,11 @@ def complete_onboarding(data: dict):
             {"user_id": data["user_id"]},
             {
                 "$addToSet": {"public_playlists": pl}
-            },  # you could also use $push if duplicates don't matter
+            },
             upsert=True,
         )
 
     return {"status": "ok"}
-
-from fastapi import Query
-from datetime import datetime, timezone
-
-from fastapi import HTTPException
 
 @app.get("/analyze-genres", tags=["user"])
 def analyze_genres(user_id: str = Query(...)):
@@ -410,13 +389,13 @@ def analyze_genres(user_id: str = Query(...)):
         flat_genres = []
         for artist in top_artists["items"]:
             flat_genres.extend([g.lower() for g in artist.get("genres", [])])
-        print("🎧 Flattened genres from top artists:", flat_genres[:20])  # preview first 20
+        print("🎧 Flattened genres from top artists:", flat_genres[:20])
 
         freq = genre_wizard.genre_frequency(flat_genres)
         sub_genres = genre_wizard.genre_frequency(flat_genres)
         raw_highest = genre_wizard.genre_highest(flat_genres)
         print("🎧 Raw highest genre counts:", raw_highest)
-        total = sum(raw_highest.values()) or 1  # avoid divide-by-zero
+        total = sum(raw_highest.values()) or 1
         highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
         summary = genre_wizard.generate_user_summary(raw_highest, total=total)
 
@@ -455,7 +434,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
     if not refresh and user and "genre_analysis" in user:
         return user["genre_analysis"]
 
-    # Else fetch fresh data from Spotify
     access_token = get_token(user_id)
     sp = spotipy.Spotify(auth=access_token)
     top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
@@ -466,7 +444,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
         flat_genres.extend([g.lower() for g in genres])
 
-    # Compute genre breakdowns
     sub_genres = genre_wizard.genre_frequency(flat_genres)
     raw_highest = genre_wizard.genre_highest(flat_genres)
     total = sum(raw_highest.values()) or 1
@@ -573,7 +550,6 @@ def refresh_session(user_id: str = Query(...)):
 @app.get("/health", tags=["system"])
 def health_check():
     try:
-        # Ping the database
         client.admin.command("ping")
         return {"status": "ok", "db": "connected"}
     except ConnectionFailure:
@@ -619,7 +595,6 @@ def get_dashboard(user_id: str = Query(...)):
 
     genre_analysis = user.get("genre_analysis")
 
-    # 🩹 Ensure sub_genres exists
     if genre_analysis and "sub_genres" not in genre_analysis:
         print(f"⚠️ Missing sub_genres for {user_id}, fetching fresh")
         genre_analysis = get_genres(user_id=user_id, refresh=True)
@@ -645,7 +620,7 @@ def get_dashboard(user_id: str = Query(...)):
 @app.get("/user-genres",tags=["user"])
 def get_flat_user_genres(
     access_token: str = Depends(get_token),
-    time_range: str = "short_term",  # "short_term" = past 4 weeks
+    time_range: str = "short_term",
     limit: int = 50,
 ):
     sp = spotipy.Spotify(auth=access_token)
