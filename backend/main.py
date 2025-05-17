@@ -35,23 +35,12 @@ class ThemeSettings(BaseModel):
 
 sp_oauth = get_spotify_oauth()
 
-if not IS_DEV:
-    app.mount("/", StaticFiles(directory="backend/static", html=True), name="static")
-
 tags_metadata = [
     {
         "name": "user",
         "description": "For queries about the user"
     }
 ]
-
-
-@app.get("/", tags=["routes"])
-def serve_react():
-    if IS_DEV:
-        return JSONResponse({"message": "Frontend not served in development. Run `npm run dev`."})
-    return FileResponse("backend/static/index.html")
-
 
 @app.get("/login",tags=["routes"])
 def login():
