@@ -23,9 +23,6 @@ from backend.music.genreColours import META_GENRE_COLORS
 
 app = FastAPI()
 
-app.mount("/assets", StaticFiles(directory="backend/static/assets"), name="assets")
-
-
 IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
 BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
 
