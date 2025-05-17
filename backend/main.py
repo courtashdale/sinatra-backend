@@ -35,7 +35,6 @@ origins = [
     "https://sinatra.vercel.app",  # optional fallback
 ]
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -43,14 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-class ThemeSettings(BaseModel):
-    user_id: str
-    theme: str
-    background: str
-    font: str
-    text_color: str
 
 sp_oauth = get_spotify_oauth()
 
@@ -282,23 +273,6 @@ def get_top_tracks(
 
     return {"top_tracks": simplified}
 
-@app.post("/save-theme", tags=["theme"])
-def save_theme(settings: ThemeSettings):
-    result = users_collection.update_one(
-        {"user_id": settings.user_id},
-        {"$set": {
-            "theme_settings": {
-                "theme": settings.theme,
-                "background": settings.background,
-                "font": settings.font,
-                "text_color": settings.text_color,
-            }
-        }},
-        upsert=True
-    )
-    return {"status": "ok", "modified": result.modified_count}
-
-
 @app.post("/play", tags=["playback"])
 def start_playback(access_token: str = Depends(get_token)):
     sp = spotipy.Spotify(auth=access_token)
@@ -511,11 +485,6 @@ def get_playlist_info(user_id: str = Query(...), playlist_id: str = Query(...)):
         "image": playlist["images"][0]["url"] if playlist["images"] else None,
     }
 
-@app.get("/get-theme", tags=["theme"])
-def get_theme(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id})
-    return user.get("theme_settings", {})
-
 
 @app.delete("/delete-user",tags=["mongodb"])
 def delete_user(user_id: str = Query(...)):
@@ -592,6 +561,8 @@ def backfill_playlist_metadata():
 
     return {"status": "ok", "users_updated": updated}
 
+from fastapi import Query
+
 @app.get("/dashboard", tags=["user"])
 def get_dashboard(user_id: str = Query(...)):
     user = users_collection.find_one({"user_id": user_id})
@@ -600,26 +571,28 @@ def get_dashboard(user_id: str = Query(...)):
 
     genre_analysis = user.get("genre_analysis")
 
+    # 🧠 Fix missing sub_genres on the fly
     if genre_analysis and "sub_genres" not in genre_analysis:
         print(f"⚠️ Missing sub_genres for {user_id}, fetching fresh")
         genre_analysis = get_genres(user_id=user_id, refresh=True)
 
+    # ✅ fallback if keys don't exist
     all_playlists = user.get("public_playlists", [])
     featured_ids = user.get("important_playlists", [])
-    featured_playlists = [pl for pl in all_playlists if pl["playlist_id"] in featured_ids]
+    featured_playlists = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
 
     return {
         "user": {
-            "user_id": user["user_id"],
-            "display_name": user.get("display_name"),
-            "profile_picture": user.get("profile_picture"),
-            "genre_analysis": genre_analysis,
+            "user_id": user.get("user_id"),
+            "display_name": user.get("display_name", "Unknown User"),
+            "profile_picture": user.get("profile_picture", ""),
+            "genre_analysis": genre_analysis or {},
         },
         "playlists": {
             "featured": featured_playlists,
             "all": all_playlists,
         },
-        "last_played_track": user.get("last_played_track", False),
+        "last_played_track": user.get("last_played_track", {}),
     }
 
 @app.get("/user-genres",tags=["user"])
@@ -639,6 +612,9 @@ def get_flat_user_genres(
         flat_genres.extend(genres)
 
     return {"genres": flat_genres}
+
+if not IS_DEV:
+    app.mount("/assets", StaticFiles(directory="/backend/static/assets"), name="assets")
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_frontend_catchall(request: Request, full_path: str):
