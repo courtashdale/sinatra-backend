@@ -3,12 +3,13 @@
 # -- Imports
 import os
 import spotipy
+import json
 from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
-import csv
 from pydantic import BaseModel
 from starlette.requests import Request
+from pathlib import Path
 
 # -- fastAPI
 from fastapi import FastAPI, Depends, Query, HTTPException
@@ -21,7 +22,6 @@ from backend.utils import get_spotify_oauth, get_artist_genres
 from backend.db import users_collection, client
 from backend.auth import get_token
 from backend.music import genre_wizard
-from backend.music.genreColours import META_GENRE_COLORS
 
 app = FastAPI()
 
@@ -150,10 +150,6 @@ def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
     except Exception as e:
         print(f"⚠️ Recently played error: {e}")
         return {"recently_played": False}
-
-@app.get("/meta-genre-schema")
-def get_meta_genre_schema():
-    return JSONResponse(META_GENRE_COLORS)
 
 @app.get("/playback", tags=["playback"])
 def get_playback_state(
@@ -450,21 +446,17 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
     return result
 
-
 @app.get("/genre-map", tags=["user"])
 def get_genre_map():
-    csv_path = os.path.join(os.path.dirname(__file__), "music", "genreSchema.csv")
-    genre_map = {}
-
-    with open(csv_path, newline='') as csvfile:
-        reader = csv.reader(csvfile)
-        for row in reader:
-            if len(row) >= 2:
-                sub = row[0].strip().lower()
-                parent = row[1].strip().lower()
-                genre_map[sub] = parent
-
-    return JSONResponse(content=genre_map)
+    try:
+        path = Path(__file__).resolve().parent / "music" / "genre-map.json"
+        with open(path) as f:
+            genre_map = json.load(f)
+        return genre_map
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Genre map not found")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Invalid genre map JSON")
 
 @app.get("/public-playlist/{playlist_id}", tags=["playlists"])
 def get_public_playlist(playlist_id: str):
@@ -564,8 +556,6 @@ def backfill_playlist_metadata():
 
     return {"status": "ok", "users_updated": updated}
 
-from fastapi import Query
-
 @app.get("/dashboard", tags=["user"])
 def get_dashboard(user_id: str = Query(...)):
     user = users_collection.find_one({"user_id": user_id})
@@ -615,3 +605,43 @@ def get_flat_user_genres(
         flat_genres.extend(genres)
 
     return {"genres": flat_genres}
+
+@app.get("/init-home", tags=["user"])
+def init_home(user_id: str = Query(...)):
+    user = users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Get last played track
+    last_played = user.get("last_played_track")
+
+    # Get genre analysis
+    genre_analysis = user.get("genre_analysis")
+
+    # Get playlists
+    all_playlists = user.get("public_playlists", [])
+    featured_ids = user.get("important_playlists", [])
+    featured_playlists = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
+
+    # Load genre map
+    try:
+        with open(os.path.join("backend", "music", "genre-map.json")) as f:
+            genre_map = json.load(f)
+    except Exception as e:
+        print("Failed to load genre map:", e)
+        genre_map = {}
+
+    return {
+        "user": {
+            "user_id": user["user_id"],
+            "display_name": user.get("display_name"),
+            "profile_picture": user.get("profile_picture", ""),
+            "genre_analysis": genre_analysis or {},
+        },
+        "playlists": {
+            "featured": featured_playlists,
+            "all": all_playlists,
+        },
+        "last_played_track": last_played,
+        "genre_map": genre_map,
+    }

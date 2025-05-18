@@ -17,3 +17,4 @@ tree.md__pycache__/
 .venv/
 backend/static
 tree.md
+.cache
