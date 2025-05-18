@@ -645,3 +645,18 @@ def init_home(user_id: str = Query(...)):
         "last_played_track": last_played,
         "genre_map": genre_map,
     }
+
+@app.get("/public-profile/{user_id}")
+def public_profile(user_id: str):
+    user = users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "user_id": user["user_id"],
+        "display_name": user.get("display_name"),
+        "profile_picture": user.get("profile_picture"),
+        "last_played_track": user.get("last_played_track"),
+        "genres_data": user.get("genres_data"),
+        "featured_playlists": user.get("featured_playlists", []),
+    }
