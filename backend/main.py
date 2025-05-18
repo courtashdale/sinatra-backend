@@ -652,11 +652,16 @@ def public_profile(user_id: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    genre_analysis = user.get("genre_analysis")
+    featured_ids = user.get("important_playlists", [])
+    all_playlists = user.get("public_playlists", [])
+    featured = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
+
     return {
         "user_id": user["user_id"],
         "display_name": user.get("display_name"),
         "profile_picture": user.get("profile_picture"),
         "last_played_track": user.get("last_played_track"),
-        "genres_data": user.get("genres_data"),
-        "featured_playlists": user.get("featured_playlists", []),
+        "genres_data": genre_analysis,
+        "featured_playlists": featured,
     }
