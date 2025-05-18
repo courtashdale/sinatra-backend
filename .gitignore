@@ -18,3 +18,4 @@ tree.md__pycache__/
 backend/static
 tree.md
 .cache
+.DS_Store
