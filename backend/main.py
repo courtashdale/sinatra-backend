@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 from starlette.requests import Request
 from pathlib import Path
+from typing import List
 
 # -- fastAPI
-from fastapi import FastAPI, Depends, Query, HTTPException
+from fastapi import FastAPI, Depends, Query, HTTPException, Body, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,10 +32,11 @@ BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
 # -- website
 origins = [
     "http://localhost:5173",  # local dev
-    "https://sinatra.live",   # your custom domain
+    "https://sinatra.live",   # custom domain
     "https://sinatra.vercel.app",  # optional fallback
 ]
 
+# -- middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -45,18 +47,18 @@ app.add_middleware(
 
 sp_oauth = get_spotify_oauth()
 
-tags_metadata = [
-    {
-        "name": "user",
-        "description": "For queries about the user"
-    }
-]
+# ---- FASTAPI BITS
+
+class OnboardingPayload(BaseModel):
+    user_id: str
+    display_name: str
+    profile_picture: str
+    playlist_ids: List[str]
 
 @app.get("/login",tags=["routes"])
 def login():
     auth_url = sp_oauth.get_authorize_url()
     return RedirectResponse(auth_url)
-
 
 @app.get("/user-playlists",tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
@@ -286,20 +288,15 @@ def pause_playback(access_token: str = Depends(get_token)):
     return {"status": "paused"}
 
 
-@app.post("/complete-onboarding",tags=["register"])
-def complete_onboarding(data: dict):
-    if not all(
-        k in data
-        for k in ["user_id", "display_name", "profile_picture", "playlist_ids"]
-    ):
-        raise HTTPException(status_code=400, detail="Missing required fields")
 
-    access_token = get_token(data["user_id"])
+@app.post("/complete-onboarding", tags=["register"])
+def complete_onboarding(data: OnboardingPayload):
+    access_token = get_token(data.user_id)
     sp = spotipy.Spotify(auth=access_token)
 
     full_playlists = []
 
-    for pid in data["playlist_ids"]:
+    for pid in data.playlist_ids:
         playlist = sp.playlist(pid)
         tracks = []
 
@@ -334,12 +331,12 @@ def complete_onboarding(data: dict):
         )
 
     users_collection.update_one(
-        {"user_id": data["user_id"]},
+        {"user_id": data.user_id},
         {
             "$set": {
-                "display_name": data["display_name"],
-                "profile_picture": data["profile_picture"],
-                "important_playlists": data["playlist_ids"],
+                "display_name": data.display_name,
+                "profile_picture": data.profile_picture,
+                "important_playlists": data.playlist_ids,
                 "onboarded": True,
             }
         },
@@ -347,7 +344,7 @@ def complete_onboarding(data: dict):
 
     for pl in full_playlists:
         users_collection.update_one(
-            {"user_id": data["user_id"]},
+            {"user_id": data.user_id},
             {
                 "$addToSet": {"public_playlists": pl}
             },
@@ -562,22 +559,25 @@ def get_dashboard(user_id: str = Query(...)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Get genre analysis, playlists, playback
     genre_analysis = user.get("genre_analysis")
-
-    # 🧠 Fix missing sub_genres on the fly
-    if genre_analysis and "sub_genres" not in genre_analysis:
-        print(f"⚠️ Missing sub_genres for {user_id}, fetching fresh")
-        genre_analysis = get_genres(user_id=user_id, refresh=True)
-
-    # ✅ fallback if keys don't exist
+    last_played = user.get("last_played_track")
     all_playlists = user.get("public_playlists", [])
     featured_ids = user.get("important_playlists", [])
     featured_playlists = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
 
+    # Load genre map
+    try:
+        with open(os.path.join("backend", "music", "genre-map.json")) as f:
+            genre_map = json.load(f)
+    except Exception as e:
+        print("Failed to load genre map:", e)
+        genre_map = {}
+
     return {
         "user": {
-            "user_id": user.get("user_id"),
-            "display_name": user.get("display_name", "Unknown User"),
+            "user_id": user["user_id"],
+            "display_name": user.get("display_name"),
             "profile_picture": user.get("profile_picture", ""),
             "genre_analysis": genre_analysis or {},
         },
@@ -585,7 +585,8 @@ def get_dashboard(user_id: str = Query(...)):
             "featured": featured_playlists,
             "all": all_playlists,
         },
-        "last_played_track": user.get("last_played_track", {}),
+        "played_track": last_played,
+        "genre_map": genre_map,
     }
 
 @app.get("/user-genres",tags=["user"])
