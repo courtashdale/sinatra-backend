@@ -19,3 +19,4 @@ backend/static
 tree.md
 .cache
 .DS_Store
+settings.json

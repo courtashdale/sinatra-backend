@@ -47,13 +47,28 @@ app.add_middleware(
 
 sp_oauth = get_spotify_oauth()
 
-# ---- FASTAPI BITS
+# ---- Classes
+
+
 
 class OnboardingPayload(BaseModel):
     user_id: str
     display_name: str
     profile_picture: str
     playlist_ids: List[str]
+
+class PlaylistSummary(BaseModel):
+    id: str
+    name: str
+    image: str
+    tracks: int
+
+class SaveAllPlaylistsRequest(BaseModel):
+    user_id: str
+    playlists: List[PlaylistSummary]
+
+
+# --- FastAPI endpoints
 
 @app.get("/login",tags=["routes"])
 def login():
@@ -83,6 +98,8 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
     return user["public_playlists"]
 
+
+from fastapi import Request
 
 @app.get("/callback",tags=["routes"])
 def callback(code: str):
@@ -626,3 +643,26 @@ def public_profile(user_id: str):
         "genres_data": genre_analysis,
         "featured_playlists": featured,
     }
+
+@app.post("/update-playlists", tags=["playlists"])
+def update_all_playlists(data: SaveAllPlaylistsRequest):
+    playlist_objects = [
+        {
+            "playlist_id": p.id,
+            "name": p.name,
+            "image": p.image,
+            "track_count": p.tracks,
+        }
+        for p in data.playlists
+    ]
+
+    result = users_collection.update_one(
+        {"user_id": data.user_id},
+        {"$set": {"playlists.all": playlist_objects}},
+        upsert=True
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {"status": "success", "count": len(playlist_objects)}
