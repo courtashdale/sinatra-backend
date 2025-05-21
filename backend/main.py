@@ -78,26 +78,25 @@ def login():
 @app.get("/user-playlists",tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
     user = users_collection.find_one({"user_id": user_id})
-    if not user or "important_playlists" not in user:
+    if not user or "playlists.featured" not in user:
         return []
 
     public = []
-    for pid in user["important_playlists"]:
+    for pid in user["playlists.featured"]:
         match = users_collection.find_one(
-            {"public_playlists.playlist_id": pid}, {"public_playlists.$": 1}
+            {"playlists.all.playlist_id": pid}, {"playlists.all.$": 1}
         )
-        if match and "public_playlists" in match:
-            public.append(match["public_playlists"][0])
+        if match and "playlists.all" in match:
+            public.append(match["playlists.all"][0])
     return public
 
 @app.get("/all-playlists", tags=["user"])
 def get_all_user_playlists(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id}, {"public_playlists": 1})
-    if not user or "public_playlists" not in user:
+    user = users_collection.find_one({"user_id": user_id}, {"playlists.all": 1})
+    if not user or "playlists.all" not in user:
         return []
 
-    return user["public_playlists"]
-
+    return user["playlists.all"]
 
 from fastapi import Request
 
@@ -233,7 +232,7 @@ def get_current_user(user_id: str = Query(...)):
         "display_name": user["display_name"],
         "email": user.get("email"),
         "profile_picture": user.get("profile_picture"),
-        "important_playlists": user.get("important_playlists", []),
+        "playlists.featured": user.get("playlists.featured", []),
         "genre_analysis": user.get("genre_analysis"),
     }
 
@@ -353,8 +352,11 @@ def complete_onboarding(data: OnboardingPayload):
             "$set": {
                 "display_name": data.display_name,
                 "profile_picture": data.profile_picture,
-                "important_playlists": data.playlist_ids,
                 "onboarded": True,
+                "playlists": {
+                    "all": full_playlists,
+                    "featured": [pl for pl in full_playlists if pl["playlist_id"] in data.playlist_ids]
+                }
             }
         },
     )
@@ -363,7 +365,7 @@ def complete_onboarding(data: OnboardingPayload):
         users_collection.update_one(
             {"user_id": data.user_id},
             {
-                "$addToSet": {"public_playlists": pl}
+                "$addToSet": {"playlists.all": pl}
             },
             upsert=True,
         )
@@ -475,12 +477,12 @@ def get_genre_map():
 @app.get("/public-playlist/{playlist_id}", tags=["playlists"])
 def get_public_playlist(playlist_id: str):
     match = users_collection.find_one(
-        {"public_playlists.playlist_id": playlist_id}, {"public_playlists.$": 1}
+        {"playlists.all.playlist_id": playlist_id}, {"playlists.all.$": 1}
     )
-    if not match or "public_playlists" not in match:
+    if not match or "playlists.all" not in match:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    return match["public_playlists"][0]
+    return match["playlists.all"][0]
 
 
 @app.get("/playlist-info", tags=["playlists"])
@@ -540,7 +542,7 @@ def health_check():
 
 @app.post("/admin/backfill-playlist-metadata", tags=["admin"])
 def backfill_playlist_metadata():
-    users = users_collection.find({"public_playlists": {"$exists": True}})
+    users = users_collection.find({"playlists.all": {"$exists": True}})
 
     updated = 0
 
@@ -552,7 +554,7 @@ def backfill_playlist_metadata():
         sp = spotipy.Spotify(auth=access_token)
         updated_playlists = []
 
-        for pl in user.get("public_playlists", []):
+        for pl in user.get("playlists.all", []):
             try:
                 playlist = sp.playlist(pl["playlist_id"])
                 pl["track_count"] = playlist["tracks"]["total"]
@@ -564,7 +566,7 @@ def backfill_playlist_metadata():
 
         users_collection.update_one(
             {"user_id": user["user_id"]},
-            {"$set": {"public_playlists": updated_playlists}},
+            {"$set": {"playlists.all": updated_playlists}},
         )
         updated += 1
 
@@ -579,9 +581,8 @@ def get_dashboard(user_id: str = Query(...)):
     # Get genre analysis, playlists, playback
     genre_analysis = user.get("genre_analysis")
     last_played = user.get("last_played_track")
-    all_playlists = user.get("public_playlists", [])
-    featured_ids = user.get("important_playlists", [])
-    featured_playlists = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
+    all_playlists = user.get("playlists", {}).get("all", [])
+    featured_playlists = user.get("playlists", {}).get("featured", [])
 
     # Load genre map
     try:
@@ -631,8 +632,8 @@ def public_profile(user_id: str):
         raise HTTPException(status_code=404, detail="User not found")
 
     genre_analysis = user.get("genre_analysis")
-    featured_ids = user.get("important_playlists", [])
-    all_playlists = user.get("public_playlists", [])
+    featured_ids = user.get("playlists.featured", [])
+    all_playlists = user.get("playlists.all", [])
     featured = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
 
     return {
@@ -644,25 +645,27 @@ def public_profile(user_id: str):
         "featured_playlists": featured,
     }
 
-@app.post("/update-playlists", tags=["playlists"])
-def update_all_playlists(data: SaveAllPlaylistsRequest):
-    playlist_objects = [
-        {
-            "playlist_id": p.id,
-            "name": p.name,
-            "image": p.image,
-            "track_count": p.tracks,
-        }
-        for p in data.playlists
-    ]
-
+@app.post("/add-playlists", tags=["user"])
+def add_playlists(data: SaveAllPlaylistsRequest):
     result = users_collection.update_one(
         {"user_id": data.user_id},
-        {"$set": {"playlists.all": playlist_objects}},
-        upsert=True
+        {
+            "$addToSet": {
+                "playlists.all": {"$each": [pl.dict() for pl in data.playlists]}
+            }
+        },
+        upsert=True,
     )
+    return {"status": "added", "modified_count": result.modified_count}
 
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    return {"status": "success", "count": len(playlist_objects)}
+@app.post("/delete-playlists", tags=["user"])
+def delete_playlists(data: SaveAllPlaylistsRequest):
+    result = users_collection.update_one(
+        {"user_id": data.user_id},
+        {
+            "$pull": {
+                "playlists.all": {"playlist_id": {"$in": [pl.id for pl in data.playlists]}}
+            }
+        }
+    )
+    return {"status": "deleted", "modified_count": result.modified_count}
