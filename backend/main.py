@@ -134,7 +134,7 @@ def callback(code: str):
     print("🧪 Redirecting to:", BASE_URL)
     user = users_collection.find_one({"user_id": user_id})
     frontend_base = "http://localhost:5173" if IS_DEV else BASE_URL
-    if user and user.get("onboarded"):
+    if user and user.get("registered"):
         return RedirectResponse(f"{frontend_base}/home?user_id={user_id}")
     else:
         return RedirectResponse(f"{frontend_base}/onboard?user_id={user_id}")
@@ -708,7 +708,8 @@ def register_user(data: dict = Body(...)):
             "all": data.get("selected_playlists", []),
             "featured": data.get("featured_playlists", []),
         },
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
+        "registered": True
     }
 
     users_collection.update_one(
