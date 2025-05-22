@@ -693,3 +693,28 @@ def get_spotify_me(user_id: str = Query(...)):
     except SpotifyException as e:
         print(f"⚠️ Spotify /me error for {user_id}: {e}")
         raise HTTPException(status_code=401, detail="Failed to fetch Spotify user profile.")
+    
+@app.post("/register", tags=["user"])
+def register_user(data: dict = Body(...)):
+    user_id = data.get("user_id") or data.get("id")  # Fallback
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+
+    user_doc = {
+        "user_id": user_id,
+        "display_name": data.get("display_name"),
+        "profile_picture": data.get("profile_picture"),
+        "playlists": {
+            "all": data.get("selected_playlists", []),
+            "featured": data.get("featured_playlists", []),
+        },
+        "created_at": datetime.utcnow()
+    }
+
+    users_collection.update_one(
+        {"user_id": user_id},
+        {"$set": user_doc},
+        upsert=True
+    )
+
+    return {"status": "success", "message": "User registered"}
