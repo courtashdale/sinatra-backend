@@ -17,12 +17,14 @@ from fastapi import FastAPI, Depends, Query, HTTPException, Body, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Body
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
 from backend.db import users_collection, client
 from backend.auth import get_token
 from backend.music import genre_wizard
+from backend.music.genre_wizard import META_GENRES, filter_sub_genres
 
 app = FastAPI()
 
@@ -303,8 +305,6 @@ def pause_playback(access_token: str = Depends(get_token)):
     sp.pause_playback()
     return {"status": "paused"}
 
-
-
 @app.post("/complete-onboarding", tags=["register"])
 def complete_onboarding(data: OnboardingPayload):
     access_token = get_token(data.user_id)
@@ -384,7 +384,7 @@ def analyze_genres(user_id: str = Query(...)):
         for artist in top_artists["items"]:
             flat_genres.extend([g.lower() for g in artist.get("genres", [])])
         print("🎧 Flattened genres from top artists:", flat_genres[:20])
-
+        print("🎧 Raw flat_genres sample (before filtering):", flat_genres[:20])
         freq = genre_wizard.genre_frequency(flat_genres)
         sub_genres = genre_wizard.genre_frequency(flat_genres)
         raw_highest = genre_wizard.genre_highest(flat_genres)
@@ -431,13 +431,18 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
     access_token = get_token(user_id)
     sp = spotipy.Spotify(auth=access_token)
     top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
-    flat_genres = []
 
     artist_genre_cache = {}
+    flat_genres = []
     for track in top_tracks["items"]:
         genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
-        flat_genres.extend([g.lower() for g in genres])
+        for g in genres:
+            g_clean = g.strip().lower()
+            flat_genres.append(g_clean)
 
+    print("🎯 All raw genres (before filtering):", flat_genres[:20])
+
+    # Let genre_wizard handle the filtering of meta-genres
     sub_genres = genre_wizard.genre_frequency(flat_genres)
     raw_highest = genre_wizard.genre_highest(flat_genres)
     total = sum(raw_highest.values()) or 1
@@ -600,30 +605,12 @@ def get_dashboard(user_id: str = Query(...)):
             "genre_analysis": genre_analysis or {},
         },
         "playlists": {
-            "featured": featured_playlists,
+            "featured": [pl for pl in all_playlists if pl.get("playlist_id") in featured_playlists],
             "all": all_playlists,
         },
         "played_track": last_played,
         "genre_map": genre_map,
     }
-
-@app.get("/user-genres",tags=["user"])
-def get_flat_user_genres(
-    access_token: str = Depends(get_token),
-    time_range: str = "short_term",
-    limit: int = 50,
-):
-    sp = spotipy.Spotify(auth=access_token)
-    top_tracks = sp.current_user_top_tracks(limit=limit, time_range=time_range)
-
-    artist_genre_cache = {}
-    flat_genres = []
-
-    for track in top_tracks["items"]:
-        genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
-        flat_genres.extend(genres)
-
-    return {"genres": flat_genres}
 
 @app.get("/public-profile/{user_id}")
 def public_profile(user_id: str):
@@ -658,14 +645,51 @@ def add_playlists(data: SaveAllPlaylistsRequest):
     )
     return {"status": "added", "modified_count": result.modified_count}
 
+@app.post("/update-featured", tags=["user"])
+def update_featured_playlists(data: dict):
+    user_id = data["user_id"]
+    playlist_ids = data["playlist_ids"]
+    users_collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"playlists.featured": playlist_ids}}
+    )
+    return {"status": "ok"}
+
 @app.post("/delete-playlists", tags=["user"])
 def delete_playlists(data: SaveAllPlaylistsRequest):
+    playlist_ids = [pl.id for pl in data.playlists]
+    print("🗑️ Deleting playlists:", playlist_ids, "for user:", data.user_id)
+
     result = users_collection.update_one(
         {"user_id": data.user_id},
         {
             "$pull": {
-                "playlists.all": {"playlist_id": {"$in": [pl.id for pl in data.playlists]}}
+                "playlists.all": {
+                    "playlist_id": {"$in": playlist_ids}
+                }
             }
         }
     )
-    return {"status": "deleted", "modified_count": result.modified_count}
+
+    return {"status": "deleted", "deleted_count": result.modified_count}
+
+@app.post("/refresh_genres", tags=["user"])
+def clear_genre_cache(user_id: str = Body(...)):
+    result = users_collection.update_one(
+        {"user_id": user_id},
+        {"$unset": {"genre_analysis": "", "genre_last_updated": ""}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="User not found or no genre data to clear.")
+    return {"status": "ok", "message": "Genre cache cleared"}
+
+@app.get("/spotify-me", tags=["spotify"])
+def get_spotify_me(user_id: str = Query(...)):
+    try:
+        access_token = get_token(user_id)
+        sp = spotipy.Spotify(auth=access_token)
+        me = sp.current_user()
+        return me
+    except SpotifyException as e:
+        print(f"⚠️ Spotify /me error for {user_id}: {e}")
+        raise HTTPException(status_code=401, detail="Failed to fetch Spotify user profile.")

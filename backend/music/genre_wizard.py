@@ -21,11 +21,15 @@ for parent in set(GENRE_MAP.values()):
     if parent not in GENRE_MAP:
         GENRE_MAP[parent] = parent
 
+def filter_sub_genres(genre_list):
+    """Exclude any genre that is a known meta-genre."""
+    return [g for g in genre_list if g.lower() not in META_GENRES]
+
 # Optional: Load meta-genres.json for is_meta_genre()
 meta_genre_path = os.path.join(os.path.dirname(__file__), "meta-genres.json")
 if os.path.exists(meta_genre_path):
     with open(meta_genre_path) as f:
-        META_GENRES = set(g.lower() for g in json.load(f))
+        META_GENRES = set(g.strip().lower() for g in json.load(f))
 else:
     META_GENRES = set()
 
@@ -46,7 +50,13 @@ def is_meta_genre(name: str) -> bool:
 def genre_frequency(genre_inputs, limit=20):
     if not isinstance(genre_inputs, list):
         raise ValueError("Expected a list of genres.")
-    frequency_counter = Counter(genre_inputs)
+    
+    frequency_counter = Counter()
+    for genre in genre_inputs:
+        genre_clean = genre.strip().lower()
+        if genre_clean not in META_GENRES:
+            frequency_counter[genre_clean] += 1
+
     top_genres = frequency_counter.most_common(limit)
     return dict(top_genres)
 
