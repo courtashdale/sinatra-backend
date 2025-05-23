@@ -316,7 +316,7 @@ def complete_onboarding(data: OnboardingPayload):
         playlist = sp.playlist(pid)
         simplified_playlists.append(
             {
-                "playlist_id": pid,
+                "id": pid,
                 "name": playlist["name"],
                 "image": playlist["images"][0]["url"] if playlist["images"] else None,
                 "track_count": playlist["tracks"]["total"],
@@ -333,7 +333,7 @@ def complete_onboarding(data: OnboardingPayload):
                 "onboarded": True,
                 "playlists": {
                     "all": simplified_playlists,
-                    "featured": [pl for pl in simplified_playlists if pl["playlist_id"] in data.playlist_ids]
+                    "featured": [pl["id"] for pl in simplified_playlists if pl["id"] in data.playlist_ids]
                 }
             }
         },
