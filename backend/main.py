@@ -605,7 +605,11 @@ def get_dashboard(user_id: str = Query(...)):
             "genre_analysis": genre_analysis or {},
         },
         "playlists": {
-            "featured": [pl for pl in all_playlists if pl.get("playlist_id") in featured_playlists],
+            "featured": [
+                {**pl, "id": pl.get("playlist_id", pl.get("id"))}
+                for pl in all_playlists
+                if pl.get("playlist_id") in featured_playlists
+            ],
             "all": all_playlists,
         },
         "played_track": last_played,
@@ -647,13 +651,33 @@ def add_playlists(data: SaveAllPlaylistsRequest):
 
 @app.post("/update-featured", tags=["user"])
 def update_featured_playlists(data: dict):
-    user_id = data["user_id"]
-    playlist_ids = data["playlist_ids"]
+    user_id = data.get("user_id")
+    playlist_ids = data.get("playlist_ids")
+
+    print(f"🔄 Incoming update-featured request for user: {user_id}")
+    print(f"📦 Playlist IDs received: {playlist_ids}")
+
+    if not user_id or not isinstance(playlist_ids, list):
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    user = users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    all_playlists = user.get("playlists", {}).get("all", [])
+    known_ids = {pl.get("id") for pl in all_playlists}  # 🔧 use 'id' not 'playlist_id'
+
+    normalized_ids = [pid for pid in playlist_ids if pid in known_ids]
+
+    print("✅ Normalized featured playlist_ids:", normalized_ids)
+
     users_collection.update_one(
         {"user_id": user_id},
-        {"$set": {"playlists.featured": playlist_ids}}
+        {"$set": {"playlists.featured": normalized_ids}}
     )
-    return {"status": "ok"}
+
+    print("💾 MongoDB update complete.\n")
+    return {"status": "ok", "count": len(normalized_ids)}
 
 @app.post("/delete-playlists", tags=["user"])
 def delete_playlists(data: SaveAllPlaylistsRequest):
