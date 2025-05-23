@@ -310,37 +310,15 @@ def complete_onboarding(data: OnboardingPayload):
     access_token = get_token(data.user_id)
     sp = spotipy.Spotify(auth=access_token)
 
-    full_playlists = []
+    simplified_playlists = []
 
     for pid in data.playlist_ids:
         playlist = sp.playlist(pid)
-        tracks = []
-
-        for item in playlist["tracks"]["items"]:
-            track = item["track"]
-            if track is None:
-                continue
-            tracks.append(
-                {
-                    "name": track["name"],
-                    "artist": track["artists"][0]["name"],
-                    "album": track["album"]["name"],
-                    "album_art": (
-                        track["album"]["images"][0]["url"]
-                        if track.get("album") and track["album"].get("images")
-                        else None
-                    ),
-                    "isrc": track.get("external_ids", {}).get("isrc"),
-                    "track_id": track["id"],
-                }
-            )
-
-        full_playlists.append(
+        simplified_playlists.append(
             {
                 "playlist_id": pid,
                 "name": playlist["name"],
                 "image": playlist["images"][0]["url"] if playlist["images"] else None,
-                "tracks": tracks,
                 "track_count": playlist["tracks"]["total"],
                 "external_url": playlist["external_urls"]["spotify"],
             }
@@ -354,21 +332,13 @@ def complete_onboarding(data: OnboardingPayload):
                 "profile_picture": data.profile_picture,
                 "onboarded": True,
                 "playlists": {
-                    "all": full_playlists,
-                    "featured": [pl for pl in full_playlists if pl["playlist_id"] in data.playlist_ids]
+                    "all": simplified_playlists,
+                    "featured": [pl for pl in simplified_playlists if pl["playlist_id"] in data.playlist_ids]
                 }
             }
         },
+        upsert=True
     )
-
-    for pl in full_playlists:
-        users_collection.update_one(
-            {"user_id": data.user_id},
-            {
-                "$addToSet": {"playlists.all": pl}
-            },
-            upsert=True,
-        )
 
     return {"status": "ok"}
 
@@ -606,9 +576,8 @@ def get_dashboard(user_id: str = Query(...)):
         },
         "playlists": {
             "featured": [
-                {**pl, "id": pl.get("playlist_id", pl.get("id"))}
-                for pl in all_playlists
-                if pl.get("playlist_id") in featured_playlists
+                pl for pl in all_playlists
+                if pl.get("id") in featured_playlists
             ],
             "all": all_playlists,
         },
