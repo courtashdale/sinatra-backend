@@ -9,6 +9,7 @@ from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from starlette.requests import Request
+from fastapi import Request
 from pathlib import Path
 from typing import List
 
@@ -65,9 +66,12 @@ class PlaylistSummary(BaseModel):
     image: str
     tracks: int
 
+class PlaylistID(BaseModel):
+    id: str
+
 class SaveAllPlaylistsRequest(BaseModel):
     user_id: str
-    playlists: List[PlaylistSummary]
+    playlists: List[PlaylistID]
 
 
 # --- FastAPI endpoints
@@ -77,7 +81,7 @@ def login():
     auth_url = sp_oauth.get_authorize_url()
     return RedirectResponse(auth_url)
 
-@app.get("/user-playlists",tags=["user"])
+@app.get("/user-playlists", tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
     user = users_collection.find_one({"user_id": user_id})
     if not user or "playlists.featured" not in user:
@@ -86,7 +90,7 @@ def get_user_playlists(user_id: str = Query(...)):
     public = []
     for pid in user["playlists.featured"]:
         match = users_collection.find_one(
-            {"playlists.all.playlist_id": pid}, {"playlists.all.$": 1}
+            {"user_id": user_id, "playlists.all.id": pid}, {"playlists.all.$": 1}
         )
         if match and "playlists.all" in match:
             public.append(match["playlists.all"][0])
@@ -99,8 +103,6 @@ def get_all_user_playlists(user_id: str = Query(...)):
         return []
 
     return user["playlists.all"]
-
-from fastapi import Request
 
 @app.get("/callback",tags=["routes"])
 def callback(code: str):
@@ -607,15 +609,38 @@ def public_profile(user_id: str):
 
 @app.post("/add-playlists", tags=["user"])
 def add_playlists(data: SaveAllPlaylistsRequest):
+    access_token = get_token(data.user_id)
+    sp = spotipy.Spotify(auth=access_token)
+
+    enriched = []
+
+    for pl in data.playlists:
+        try:
+            playlist = sp.playlist(pl.id)
+            enriched.append({
+                "id": pl.id,
+                "name": playlist["name"],
+                "image": playlist["images"][0]["url"] if playlist["images"] else None,
+                "tracks": playlist["tracks"]["total"],
+                "external_url": playlist["external_urls"]["spotify"]
+            })
+        except Exception as e:
+            print(f"⚠️ Failed to fetch metadata for playlist {pl.id}: {e}")
+            continue
+
+    if not enriched:
+        raise HTTPException(status_code=400, detail="No valid playlists to add")
+
     result = users_collection.update_one(
         {"user_id": data.user_id},
         {
             "$addToSet": {
-                "playlists.all": {"$each": [pl.dict() for pl in data.playlists]}
+                "playlists.all": {"$each": enriched}
             }
         },
         upsert=True,
     )
+
     return {"status": "added", "modified_count": result.modified_count}
 
 @app.post("/update-featured", tags=["user"])
@@ -658,7 +683,7 @@ def delete_playlists(data: SaveAllPlaylistsRequest):
         {
             "$pull": {
                 "playlists.all": {
-                    "playlist_id": {"$in": playlist_ids}
+                    "id": {"$in": playlist_ids}  # <-- Fix is here
                 }
             }
         }
