@@ -588,23 +588,27 @@ def get_dashboard(user_id: str = Query(...)):
     }
 
 @app.get("/public-profile/{user_id}")
-def public_profile(user_id: str):
+def get_public_profile(user_id: str):
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    genre_analysis = user.get("genre_analysis")
-    featured_ids = user.get("playlists.featured", [])
-    all_playlists = user.get("playlists.all", [])
-    featured = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
+    # get all playlists
+    all_playlists = user.get("playlists", {}).get("all", [])
+    featured_ids = user.get("playlists", {}).get("featured", [])
+
+    # match full playlist objects
+    featured_playlists = [
+        p for p in all_playlists if p.get("id") in featured_ids
+    ]
 
     return {
         "user_id": user["user_id"],
         "display_name": user.get("display_name"),
         "profile_picture": user.get("profile_picture"),
         "last_played_track": user.get("last_played_track"),
-        "genres_data": genre_analysis,
-        "featured_playlists": featured,
+        "genres_data": user.get("genre_analysis"),
+        "featured_playlists": featured_playlists,
     }
 
 @app.post("/add-playlists", tags=["user"])
