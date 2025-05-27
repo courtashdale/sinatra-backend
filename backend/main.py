@@ -83,18 +83,17 @@ def login():
 
 @app.get("/user-playlists", tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id})
-    if not user or "playlists.featured" not in user:
-        return []
+    from backend.db import playlists_collection
 
-    public = []
-    for pid in user["playlists.featured"]:
-        match = users_collection.find_one(
-            {"user_id": user_id, "playlists.all.id": pid}, {"playlists.all.$": 1}
-        )
-        if match and "playlists.all" in match:
-            public.append(match["playlists.all"][0])
-    return public
+    doc = playlists_collection.find_one({"user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No synced playlists found for user.")
+
+    return {
+        "user_id": doc["user_id"],
+        "last_updated": doc.get("last_updated"),
+        "playlists": doc.get("playlists", [])
+    }
 
 @app.get("/all-playlists", tags=["user"])
 def get_all_user_playlists(user_id: str = Query(...)):
@@ -313,43 +312,6 @@ def pause_playback(access_token: str = Depends(get_token)):
     sp.pause_playback()
     return {"status": "paused"}
 
-@app.post("/complete-onboarding", tags=["register"])
-def complete_onboarding(data: OnboardingPayload):
-    access_token = get_token(data.user_id)
-    sp = spotipy.Spotify(auth=access_token)
-
-    simplified_playlists = []
-
-    for pid in data.playlist_ids:
-        playlist = sp.playlist(pid)
-        simplified_playlists.append(
-            {
-                "id": pid,
-                "name": playlist["name"],
-                "image": playlist["images"][0]["url"] if playlist["images"] else None,
-                "track_count": playlist["tracks"]["total"],
-                "external_url": playlist["external_urls"]["spotify"],
-            }
-        )
-
-    users_collection.update_one(
-        {"user_id": data.user_id},
-        {
-            "$set": {
-                "display_name": data.display_name,
-                "profile_picture": data.profile_picture,
-                "onboarded": True,
-                "playlists": {
-                    "all": simplified_playlists,
-                    "featured": [pl["id"] for pl in simplified_playlists if pl["id"] in data.playlist_ids]
-                }
-            }
-        },
-        upsert=True
-    )
-
-    return {"status": "ok"}
-
 @app.get("/analyze-genres", tags=["user"])
 def analyze_genres(user_id: str = Query(...)):
     try:
@@ -428,7 +390,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
     highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
 
     result = {
-        "input": flat_genres,
         "sub_genres": sub_genres,
         "highest": highest,
         "summary": summary,
@@ -744,8 +705,8 @@ def register_user(data: dict = Body(...)):
 
     return {"status": "success", "message": "User registered"}
 
-@app.post("/admin/playlists", tags=["admin"])
-def sync_user_playlists(user_id: str = Query(...)):
+@app.post("/admin/sync_playlists", tags=["admin"])
+def sync_playlists(user_id: str = Query(...)):
     access_token = get_token(user_id)
     sp = spotipy.Spotify(auth=access_token)
 
