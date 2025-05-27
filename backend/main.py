@@ -22,7 +22,7 @@ from fastapi import Body
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
-from backend.db import users_collection, client
+from backend.db import users_collection, client, playlists_collection
 from backend.auth import get_token
 from backend.music import genre_wizard
 from backend.music.genre_wizard import META_GENRES, filter_sub_genres
@@ -238,20 +238,26 @@ def get_current_user(user_id: str = Query(...)):
         "profile_picture": user.get("profile_picture"),
         "playlists.featured": user.get("playlists.featured", []),
         "genre_analysis": user.get("genre_analysis"),
+        "registered": user.get("registered", False),
     }
 
 @app.get("/playlists", tags=["user"])
-def get_playlists(user_id: str = Query(...)):
+def get_playlists(
+    user_id: str = Query(...),
+    limit: int = Query(50, ge=1, le=50),
+    offset: int = Query(0, ge=0)
+):
     access_token = get_token(user_id)
     sp = spotipy.Spotify(auth=access_token)
-    raw = sp.current_user_playlists()
+    raw = sp.current_user_playlists(limit=limit, offset=offset)
 
     playlists = [
         {
             "id": p["id"],
             "name": p["name"],
-            "image": p["images"][0]["url"] if p["images"] else None,
+            "owner": p["owner"]["id"],
             "tracks": p["tracks"]["total"],
+            "image": p["images"][0]["url"] if p["images"] else None
         }
         for p in raw["items"]
     ]
@@ -737,3 +743,51 @@ def register_user(data: dict = Body(...)):
     )
 
     return {"status": "success", "message": "User registered"}
+
+@app.post("/admin/playlists", tags=["admin"])
+def sync_user_playlists(user_id: str = Query(...)):
+    access_token = get_token(user_id)
+    sp = spotipy.Spotify(auth=access_token)
+
+    all_playlists = []
+    offset = 0
+    limit = 50
+    total_fetched = 0
+
+    while True:
+        page = sp.current_user_playlists(limit=limit, offset=offset)
+        items = page.get("items", [])
+
+        if not items:
+            break
+
+        for p in items:
+            all_playlists.append({
+                "id": p["id"],
+                "name": p["name"],
+                "tracks": p["tracks"]["total"],
+                "owner_id": p["owner"]["id"],
+                "image": p["images"][0]["url"] if p["images"] else None,
+                "external_url": p["external_urls"]["spotify"]
+            })
+
+        offset += limit
+        total_fetched += len(items)
+
+    playlists_collection.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "user_id": user_id,
+                "playlists": all_playlists,
+                "last_updated": datetime.now(timezone.utc)
+            }
+        },
+        upsert=True
+    )
+
+    return {
+        "status": "ok",
+        "user_id": user_id,
+        "total_playlists": total_fetched
+    }

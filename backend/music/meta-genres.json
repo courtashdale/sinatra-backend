@@ -1,12 +1,21 @@
 [
-    "rock",
-    "pop",
-    "r&b",
-    "hip-hop",
     "electronic",
-    "metal",
-    "jazz",
     "folk",
+    "jazz",
+    "country",
+    "new age",
+    "classical",
+    "hip hop",
+    "easy listening",
+    "blues",
+    "latin",
+    "christian",
+    "rock",
+    "r&b",
     "reggae",
-    "other"
+    "pop",
+    "metal",
+    "religious",
+    "vocal",
+    "indie"
 ]
