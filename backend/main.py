@@ -52,7 +52,8 @@ sp_oauth = get_spotify_oauth()
 
 # ---- Classes
 
-
+class UserIdPayload(BaseModel):
+    user_id: str
 
 class OnboardingPayload(BaseModel):
     user_id: str
@@ -183,13 +184,14 @@ def get_playback_state(
 
         if playback and playback.get("item"):
             item = playback["item"]
+            artist = item["artists"][0]
+            artist_data = sp.artist(artist["id"])  # 🔍 fetch artist info
+
             track_data = {
-                "is_playing": playback["is_playing"],
-                "device": playback["device"]["name"],
-                "volume_percent": playback["device"]["volume_percent"],
                 "track": {
+                    "id": item["id"],
                     "name": item["name"],
-                    "artist": item["artists"][0]["name"],
+                    "artist": artist["name"],
                     "album": item["album"]["name"],
                     "external_url": item["external_urls"]["spotify"],
                     "album_art_url": (
@@ -197,8 +199,10 @@ def get_playback_state(
                         if item["album"].get("images")
                         else None
                     ),
+                    "genres": artist_data.get("genres", []),  # ✅ add genres here
                 },
             }
+
             users_collection.update_one(
                 {"user_id": user_id},
                 {"$set": {"last_played_track": track_data}},
@@ -206,13 +210,8 @@ def get_playback_state(
 
             return {"playback": track_data}
 
-        user = users_collection.find_one({"user_id": user_id})
-        return {"playback": user.get("last_played_track", False)}
-
     except Exception as e:
-        print(f"⚠️ Playback error for {user_id}: {e}")
-        user = users_collection.find_one({"user_id": user_id})
-        return {"playback": user.get("last_played_track", False)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/refresh_token", tags=["auth"])
@@ -658,8 +657,10 @@ def delete_playlists(data: SaveAllPlaylistsRequest):
 
     return {"status": "deleted", "deleted_count": result.modified_count}
 
+
 @app.post("/refresh_genres", tags=["user"])
-def clear_genre_cache(user_id: str = Body(...)):
+def clear_genre_cache(payload: UserIdPayload):
+    user_id = payload.user_id
     result = users_collection.update_one(
         {"user_id": user_id},
         {"$unset": {"genre_analysis": "", "genre_last_updated": ""}}
