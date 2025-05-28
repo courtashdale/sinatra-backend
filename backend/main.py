@@ -563,7 +563,10 @@ def public_profile(user_id: str):
     playlists = user.get("playlists", {})
     featured_ids = playlists.get("featured", [])
     all_playlists = playlists.get("all", [])
-    featured = [pl for pl in all_playlists if pl.get("playlist_id") in featured_ids]
+    featured = [
+        pl for pl in all_playlists
+        if pl.get("id") in featured_ids or pl.get("playlist_id") in featured_ids
+    ]
 
     return {
         "user_id": user["user_id"],
