@@ -720,6 +720,10 @@ def sync_playlists(user_id: str = Query(...)):
     limit = 50
     total_fetched = 0
 
+    # Get current user's Spotify ID
+    user_profile = sp.current_user()
+    spotify_user_id = user_profile["id"]
+
     while True:
         page = sp.current_user_playlists(limit=limit, offset=offset)
         items = page.get("items", [])
@@ -728,6 +732,10 @@ def sync_playlists(user_id: str = Query(...)):
             break
 
         for p in items:
+            # Filter out playlists not owned by user or with fewer than 4 tracks
+            if p["owner"]["id"] != spotify_user_id or p["tracks"]["total"] < 4:
+                continue
+
             all_playlists.append({
                 "id": p["id"],
                 "name": p["name"],
@@ -755,5 +763,41 @@ def sync_playlists(user_id: str = Query(...)):
     return {
         "status": "ok",
         "user_id": user_id,
-        "total_playlists": total_fetched
+        "total_playlists_fetched": total_fetched,
+        "total_playlists_saved": len(all_playlists)
+    }
+
+@app.get("/top-subgenre", tags=["user"])
+def get_top_subgenre(user_id: str = Query(...)):
+    user = users_collection.find_one({"user_id": user_id})
+    if not user or "genre_analysis" not in user:
+        raise HTTPException(status_code=404, detail="No genre data found.")
+
+    genre_data = user["genre_analysis"]
+
+    try:
+        # Load the backend genre map (same one used by genre_wizard)
+        genre_map_path = os.path.join("backend", "music", "genre-map.json")
+        with open(genre_map_path) as f:
+            genre_map = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to load genre map.")
+
+    # Extract sub_genre frequency
+    genre_source = genre_data.get("sub_genres") or genre_data.get("frequency")
+    if not genre_source:
+        raise HTTPException(status_code=404, detail="No genre frequency data.")
+
+    # Find top sub-genre that is not a meta-genre
+    sorted_genres = sorted(genre_source.items(), key=lambda x: -x[1])
+    top_sub = next((g for g, _ in sorted_genres if genre_map.get(g.lower(), "") != g.lower()), None)
+
+    if not top_sub:
+        return {"top_subgenre": None, "meta_genre": None}
+
+    meta_genre = genre_map.get(top_sub.lower(), "other")
+
+    return {
+        "top_subgenre": top_sub,
+        "meta_genre": meta_genre
     }
