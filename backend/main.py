@@ -26,6 +26,7 @@ from backend.db import users_collection, client, playlists_collection
 from backend.auth import get_token
 from backend.music import genre_wizard
 from backend.music.genre_wizard import META_GENRES, filter_sub_genres
+from backend.music.meta_gradients import get_gradient_for_genre
 
 app = FastAPI()
 
@@ -363,10 +364,17 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
         result = {
             "sub_genres": dict(sorted(sub_genres.items(), key=lambda x: -x[1])[:10]),
-            "meta_genres": dict(sorted(meta_genres.items(), key=lambda x: -x[1])[:10]),
+            "meta_genres": {
+                genre: {
+                    "portion": portion,
+                    "gradient": get_gradient_for_genre(genre),
+                }
+                for genre, portion in sorted(meta_genres.items(), key=lambda x: -x[1])[:10]
+            },
             "top_subgenre": {
                 "sub_genre": top_sub,
-                "parent_genre": top_meta
+                "parent_genre": top_meta,
+                "gradient": get_gradient_for_genre(top_meta),
             }
         }
 
