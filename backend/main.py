@@ -340,17 +340,19 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         print("🎯 Combined raw genres:", flat_genres[:20])
 
         # Analyze genres
-        raw_highest = genre_wizard.genre_highest(flat_genres)  # meta-genre counts
-        sub_genres_raw = genre_wizard.genre_frequency(flat_genres)  # sub-genre counts
+        raw_highest = genre_wizard.genre_highest(flat_genres)
+        sub_genres_raw = genre_wizard.genre_frequency(flat_genres)
 
         total = sum(raw_highest.values()) or 1
-        meta_genres = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
+        meta_genres = {
+            genre: {
+                "portion": round((count / total) * 100, 1),
+                "gradient": get_gradient_for_genre(genre)
+            }
+            for genre, count in raw_highest.items()
+        }
 
-        sub_genres = {}
-        for genre, count in sub_genres_raw.items():
-            sub_genres[genre] = round((count / len(flat_genres)) * 100, 1)
-
-        # Top sub-genre + parent meta-genre
+        # Load genre map
         try:
             genre_map_path = os.path.join("backend", "music", "genre-map.json")
             with open(genre_map_path) as f:
@@ -358,19 +360,25 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to load genre map.")
 
-        sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1])
+        # Sub-genres with gradients from their parent meta-genre
+        sub_genres = {}
+        for genre, count in sub_genres_raw.items():
+            portion = round((count / len(flat_genres)) * 100, 1)
+            parent = genre_map.get(genre.lower(), "other")
+            sub_genres[genre] = {
+                "portion": portion,
+                "parent_genre": parent,
+                "gradient": get_gradient_for_genre(parent)
+            }
+
+        # Top sub-genre
+        sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])
         top_sub = next((g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()), None)
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
 
         result = {
-            "sub_genres": dict(sorted(sub_genres.items(), key=lambda x: -x[1])[:10]),
-            "meta_genres": {
-                genre: {
-                    "portion": portion,
-                    "gradient": get_gradient_for_genre(genre),
-                }
-                for genre, portion in sorted(meta_genres.items(), key=lambda x: -x[1])[:10]
-            },
+            "sub_genres": dict(sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])[:10]),
+            "meta_genres": dict(sorted(meta_genres.items(), key=lambda x: -x[1]["portion"])[:10]),
             "top_subgenre": {
                 "sub_genre": top_sub,
                 "parent_genre": top_meta,
