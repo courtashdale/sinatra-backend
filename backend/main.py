@@ -367,43 +367,79 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
     if not refresh and user and "genre_analysis" in user:
         return user["genre_analysis"]
 
-    access_token = get_token(user_id)
-    sp = spotipy.Spotify(auth=access_token)
-    top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
+    try:
+        access_token = get_token(user_id)
+        sp = spotipy.Spotify(auth=access_token)
 
-    artist_genre_cache = {}
-    flat_genres = []
-    for track in top_tracks["items"]:
-        genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
-        for g in genres:
-            g_clean = g.strip().lower()
-            flat_genres.append(g_clean)
+        # -- Fetch Spotify top data
+        top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
+        top_artists = sp.current_user_top_artists(limit=50, time_range="short_term")
 
-    print("🎯 All raw genres (before filtering):", flat_genres[:20])
+        # -- Build genre list from both sources
+        artist_genre_cache = {}
+        flat_genres = []
 
-    # Let genre_wizard handle the filtering of meta-genres
-    sub_genres = genre_wizard.genre_frequency(flat_genres)
-    raw_highest = genre_wizard.genre_highest(flat_genres)
-    total = sum(raw_highest.values()) or 1
-    summary = genre_wizard.generate_user_summary(raw_highest, total=total)
-    highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
+        # From tracks
+        for track in top_tracks["items"]:
+            genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
+            flat_genres.extend([g.strip().lower() for g in genres])
 
-    result = {
-        "sub_genres": sub_genres,
-        "highest": highest,
-        "summary": summary,
-    }
+        # From artists
+        for artist in top_artists["items"]:
+            flat_genres.extend([g.strip().lower() for g in artist.get("genres", [])])
 
-    users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "genre_analysis": result,
-            "genre_last_updated": datetime.now(timezone.utc)
-        }},
-        upsert=True,
-    )
+        print("🎯 All raw genres (combined):", flat_genres[:20])
 
-    return result
+        # -- Process genres
+        freq = genre_wizard.genre_frequency(flat_genres)
+        sub_genres = genre_wizard.genre_frequency(flat_genres)
+        raw_highest = genre_wizard.genre_highest(flat_genres)
+        total = sum(raw_highest.values()) or 1
+        highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
+        summary = genre_wizard.generate_user_summary(raw_highest, total=total)
+
+        # -- Top sub-genre and its meta-genre
+        try:
+            genre_map_path = os.path.join("backend", "music", "genre-map.json")
+            with open(genre_map_path) as f:
+                genre_map = json.load(f)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Failed to load genre map.")
+
+        sorted_genres = sorted(freq.items(), key=lambda x: -x[1])
+        top_sub = next((g for g, _ in sorted_genres if genre_map.get(g.lower(), "") != g.lower()), None)
+        top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
+
+        # -- Construct result
+        result = {
+            "sub_genres": sub_genres,
+            "highest": highest,
+            "summary": summary,
+            "top_subgenre": {
+                "sub_genre": top_sub,
+                "parent_genre": top_meta
+            },
+            "top10subs": dict(list(sub_genres.items())[:10]),
+            "top10metas": dict(list(highest.items())[:10])
+        }
+
+        # -- Cache in DB
+        users_collection.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "genre_analysis": result,
+                    "genre_last_updated": datetime.now(timezone.utc)
+                }
+            },
+            upsert=True,
+        )
+
+        return result
+
+    except Exception as e:
+        print(f"[ERROR] /genres failed for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Genre analysis failed.")
 
 @app.get("/genre-map", tags=["user"])
 def get_genre_map():
