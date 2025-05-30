@@ -311,56 +311,6 @@ def pause_playback(access_token: str = Depends(get_token)):
     sp.pause_playback()
     return {"status": "paused"}
 
-@app.get("/analyze-genres", tags=["user"])
-def analyze_genres(user_id: str = Query(...)):
-    try:
-        access_token = get_token(user_id)
-        sp = spotipy.Spotify(auth=access_token)
-
-        top_artists = sp.current_user_top_artists(limit=50, time_range="short_term")
-
-        flat_genres = []
-        for artist in top_artists["items"]:
-            flat_genres.extend([g.lower() for g in artist.get("genres", [])])
-        print("🎧 Flattened genres from top artists:", flat_genres[:20])
-        print("🎧 Raw flat_genres sample (before filtering):", flat_genres[:20])
-        freq = genre_wizard.genre_frequency(flat_genres)
-        sub_genres = genre_wizard.genre_frequency(flat_genres)
-        raw_highest = genre_wizard.genre_highest(flat_genres)
-        print("🎧 Raw highest genre counts:", raw_highest)
-        total = sum(raw_highest.values()) or 1
-        highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
-        summary = genre_wizard.generate_user_summary(raw_highest, total=total)
-
-        result = {
-            "input": flat_genres,
-            "sub_genres": sub_genres,
-            "frequency": freq,
-            "highest": highest,
-            "summary": summary
-        }
-
-        if genre_wizard.UNCATEGORIZED_GENRES:
-            print("Unmapped genres found:")
-            print(dict(genre_wizard.UNCATEGORIZED_GENRES))
-
-        users_collection.update_one(
-            {"user_id": user_id},
-            {
-                "$set": {
-                    "genre_analysis": result,
-                    "genre_last_updated": datetime.now(timezone.utc)
-                }
-            },
-            upsert=True,
-        )
-
-        return result
-
-    except Exception as e:
-        print(f"[ERROR] /analyze-genres failed for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Genre analysis failed.")
-
 @app.get("/genres", tags=["user"])
 def get_genres(user_id: str = Query(...), refresh: bool = False):
     user = users_collection.find_one({"user_id": user_id})
@@ -436,18 +386,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
     except Exception as e:
         print(f"[ERROR] /genres failed for {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Genre analysis failed.")
-
-@app.get("/genre-map", tags=["user"])
-def get_genre_map():
-    try:
-        path = Path(__file__).resolve().parent / "music" / "genre-map.json"
-        with open(path) as f:
-            genre_map = json.load(f)
-        return genre_map
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Genre map not found")
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Invalid genre map JSON")
 
 @app.get("/public-playlist/{playlist_id}", tags=["playlists"])
 def get_public_playlist(playlist_id: str):
@@ -559,14 +497,6 @@ def get_dashboard(user_id: str = Query(...)):
     all_playlists = user.get("playlists", {}).get("all", [])
     featured_playlists = user.get("playlists", {}).get("featured", [])
 
-    # Load genre map
-    try:
-        with open(os.path.join("backend", "music", "genre-map.json")) as f:
-            genre_map = json.load(f)
-    except Exception as e:
-        print("Failed to load genre map:", e)
-        genre_map = {}
-
     return {
         "user": {
             "user_id": user["user_id"],
@@ -582,7 +512,6 @@ def get_dashboard(user_id: str = Query(...)):
             "all": all_playlists,
         },
         "played_track": last_played,
-        "genre_map": genre_map,
     }
 
 @app.get("/public-profile/{user_id}")
@@ -797,39 +726,4 @@ def sync_playlists(user_id: str = Query(...)):
         "user_id": user_id,
         "total_playlists_fetched": total_fetched,
         "total_playlists_saved": len(all_playlists)
-    }
-
-@app.get("/top-subgenre", tags=["user"])
-def get_top_subgenre(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id})
-    if not user or "genre_analysis" not in user:
-        raise HTTPException(status_code=404, detail="No genre data found.")
-
-    genre_data = user["genre_analysis"]
-
-    try:
-        # Load the backend genre map (same one used by genre_wizard)
-        genre_map_path = os.path.join("backend", "music", "genre-map.json")
-        with open(genre_map_path) as f:
-            genre_map = json.load(f)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to load genre map.")
-
-    # Extract sub_genre frequency
-    genre_source = genre_data.get("sub_genres") or genre_data.get("frequency")
-    if not genre_source:
-        raise HTTPException(status_code=404, detail="No genre frequency data.")
-
-    # Find top sub-genre that is not a meta-genre
-    sorted_genres = sorted(genre_source.items(), key=lambda x: -x[1])
-    top_sub = next((g for g, _ in sorted_genres if genre_map.get(g.lower(), "") != g.lower()), None)
-
-    if not top_sub:
-        return {"top_subgenre": None, "meta_genre": None}
-
-    meta_genre = genre_map.get(top_sub.lower(), "other")
-
-    return {
-        "top_subgenre": top_sub,
-        "meta_genre": meta_genre
     }
