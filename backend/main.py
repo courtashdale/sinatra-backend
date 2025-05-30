@@ -371,59 +371,55 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         access_token = get_token(user_id)
         sp = spotipy.Spotify(auth=access_token)
 
-        # -- Fetch Spotify top data
+        # Fetch top tracks & artists
         top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
         top_artists = sp.current_user_top_artists(limit=50, time_range="short_term")
 
-        # -- Build genre list from both sources
+        # Combine genres from tracks and artists
         artist_genre_cache = {}
         flat_genres = []
 
-        # From tracks
         for track in top_tracks["items"]:
             genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
             flat_genres.extend([g.strip().lower() for g in genres])
 
-        # From artists
         for artist in top_artists["items"]:
             flat_genres.extend([g.strip().lower() for g in artist.get("genres", [])])
 
-        print("🎯 All raw genres (combined):", flat_genres[:20])
+        print("🎯 Combined raw genres:", flat_genres[:20])
 
-        # -- Process genres
-        freq = genre_wizard.genre_frequency(flat_genres)
-        sub_genres = genre_wizard.genre_frequency(flat_genres)
-        raw_highest = genre_wizard.genre_highest(flat_genres)
+        # Analyze genres
+        raw_highest = genre_wizard.genre_highest(flat_genres)  # meta-genre counts
+        sub_genres_raw = genre_wizard.genre_frequency(flat_genres)  # sub-genre counts
+
         total = sum(raw_highest.values()) or 1
-        highest = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
-        summary = genre_wizard.generate_user_summary(raw_highest, total=total)
+        meta_genres = {genre: round((count / total) * 100, 1) for genre, count in raw_highest.items()}
 
-        # -- Top sub-genre and its meta-genre
+        sub_genres = {}
+        for genre, count in sub_genres_raw.items():
+            sub_genres[genre] = round((count / len(flat_genres)) * 100, 1)
+
+        # Top sub-genre + parent meta-genre
         try:
             genre_map_path = os.path.join("backend", "music", "genre-map.json")
             with open(genre_map_path) as f:
                 genre_map = json.load(f)
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=500, detail="Failed to load genre map.")
 
-        sorted_genres = sorted(freq.items(), key=lambda x: -x[1])
-        top_sub = next((g for g, _ in sorted_genres if genre_map.get(g.lower(), "") != g.lower()), None)
+        sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1])
+        top_sub = next((g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()), None)
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
 
-        # -- Construct result
         result = {
-            "sub_genres": sub_genres,
-            "highest": highest,
-            "summary": summary,
+            "sub_genres": dict(sorted(sub_genres.items(), key=lambda x: -x[1])[:10]),
+            "meta_genres": dict(sorted(meta_genres.items(), key=lambda x: -x[1])[:10]),
             "top_subgenre": {
                 "sub_genre": top_sub,
                 "parent_genre": top_meta
-            },
-            "top10subs": dict(list(sub_genres.items())[:10]),
-            "top10metas": dict(list(highest.items())[:10])
+            }
         }
 
-        # -- Cache in DB
         users_collection.update_one(
             {"user_id": user_id},
             {
