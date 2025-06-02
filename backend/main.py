@@ -667,17 +667,41 @@ def get_spotify_me(user_id: str = Query(...)):
     
 @app.post("/register", tags=["user"])
 def register_user(data: dict = Body(...)):
-    user_id = data.get("user_id") or data.get("id")  # Fallback
+    user_id = data.get("user_id") or data.get("id")
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing user_id")
 
+    display_name = data.get("display_name")
+    profile_picture = data.get("profile_picture")
+    selected_playlists = data.get("selected_playlists", [])
+    featured_ids = [p.get("id") for p in data.get("featured_playlists", [])]
+
+    sp = spotipy.Spotify(auth=get_token(user_id))
+
+    # Enrich playlist metadata
+    enriched = []
+    for pl in selected_playlists:
+        try:
+            playlist = sp.playlist(pl["id"])
+            enriched.append({
+                "id": pl["id"],
+                "name": playlist["name"],
+                "image": playlist["images"][0]["url"] if playlist["images"] else None,
+                "tracks": playlist["tracks"]["total"],
+                "external_url": playlist["external_urls"]["spotify"]
+            })
+        except Exception as e:
+            print(f"⚠️ Failed to enrich playlist {pl['id']}: {e}")
+            continue
+
+    # Save to Mongo
     user_doc = {
         "user_id": user_id,
-        "display_name": data.get("display_name"),
-        "profile_picture": data.get("profile_picture"),
+        "display_name": display_name,
+        "profile_picture": profile_picture,
         "playlists": {
-            "all": data.get("selected_playlists", []),
-            "featured": data.get("featured_playlists", []),
+            "all": enriched,
+            "featured": featured_ids,
         },
         "created_at": datetime.utcnow(),
         "registered": True
@@ -689,7 +713,34 @@ def register_user(data: dict = Body(...)):
         upsert=True
     )
 
-    return {"status": "success", "message": "User registered"}
+    # 🔁 Trigger playback analysis
+    try:
+        playback = sp.current_playback()
+        if playback and playback.get("item"):
+            artist = playback["item"]["artists"][0]
+            artist_data = sp.artist(artist["id"])
+            track_data = {
+                "track": {
+                    "id": playback["item"]["id"],
+                    "name": playback["item"]["name"],
+                    "artist": artist["name"],
+                    "album": playback["item"]["album"]["name"],
+                    "external_url": playback["item"]["external_urls"]["spotify"],
+                    "album_art_url": playback["item"]["album"]["images"][0]["url"] if playback["item"]["album"]["images"] else None,
+                    "genres": artist_data.get("genres", [])
+                }
+            }
+            users_collection.update_one({"user_id": user_id}, {"$set": {"last_played_track": track_data}})
+    except Exception as e:
+        print("⚠️ Playback fetch failed:", e)
+
+    # 🎯 Trigger genre analysis
+    try:
+        get_genres(user_id=user_id, refresh=True)
+    except Exception as e:
+        print("⚠️ Genre analysis failed during registration:", e)
+
+    return {"status": "success", "message": "User registered and initialized"}
 
 @app.post("/admin/sync_playlists", tags=["admin"])
 def sync_playlists(user_id: str = Query(...)):
