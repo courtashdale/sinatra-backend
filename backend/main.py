@@ -322,22 +322,21 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         access_token = get_token(user_id)
         sp = spotipy.Spotify(auth=access_token)
 
-        # Fetch top tracks & artists
-        top_tracks = sp.current_user_top_tracks(limit=50, time_range="short_term")
-        top_artists = sp.current_user_top_artists(limit=50, time_range="short_term")
+        # Fetch top 100 artists
+        top_artists = []
+        for offset in (0, 50):
+            try:
+                batch = sp.current_user_top_artists(limit=50, offset=offset, time_range="short_term")
+                top_artists.extend(batch.get("items", []))
+            except Exception as e:
+                print(f"⚠️ Failed to fetch top artists at offset {offset}: {e}")
 
-        # Combine genres from tracks and artists
-        artist_genre_cache = {}
+        # Extract genres from top artists only
         flat_genres = []
-
-        for track in top_tracks["items"]:
-            genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
-            flat_genres.extend([g.strip().lower() for g in genres])
-
-        for artist in top_artists["items"]:
+        for artist in top_artists:
             flat_genres.extend([g.strip().lower() for g in artist.get("genres", [])])
 
-        print("🎯 Combined raw genres:", flat_genres[:20])
+        print("🎯 Combined raw genres from top 100 artists:", flat_genres[:20])
 
         # Analyze genres
         raw_highest = genre_wizard.genre_highest(flat_genres)
@@ -362,8 +361,10 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
         # Sub-genres with gradients from their parent meta-genre
         sub_genres = {}
+        total_subgenre_count = sum(sub_genres_raw.values()) or 1
+
         for genre, count in sub_genres_raw.items():
-            portion = round((count / len(flat_genres)) * 100, 1)
+            portion = round((count / total_subgenre_count) * 100, 1)
             parent = genre_map.get(genre.lower(), "other")
             sub_genres[genre] = {
                 "portion": portion,
@@ -371,7 +372,7 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
                 "gradient": get_gradient_for_genre(parent)
             }
 
-        # Top sub-genre
+        # Top sub-genre (ignore if it's the same as its meta-genre)
         sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])
         top_sub = next((g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()), None)
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
@@ -400,8 +401,9 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         return result
 
     except Exception as e:
-        print(f"[ERROR] /genres failed for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Genre analysis failed.")
+        import traceback
+        traceback.print_exc()  # 👈 This shows the exact error in your terminal
+        raise HTTPException(status_code=500, detail=f"Genre analysis failed: {str(e)}")
 
 @app.get("/public-playlist/{playlist_id}", tags=["playlists"])
 def get_public_playlist(playlist_id: str):
@@ -640,15 +642,17 @@ def delete_playlists(data: SaveAllPlaylistsRequest):
 
 
 @app.post("/refresh_genres", tags=["user"])
-def clear_genre_cache(payload: UserIdPayload):
+def refresh_genre_analysis(payload: UserIdPayload):
     user_id = payload.user_id
-    result = users_collection.update_one(
+
+    # Clear cached genre data
+    users_collection.update_one(
         {"user_id": user_id},
         {"$unset": {"genre_analysis": "", "genre_last_updated": ""}}
     )
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="User not found or no genre data to clear.")
-    return {"status": "ok", "message": "Genre cache cleared"}
+
+    # Trigger genre regeneration logic (equivalent to calling /genres?refresh=true)
+    return get_genres(user_id=user_id, refresh=True)
 
 @app.get("/spotify-me", tags=["spotify"])
 def get_spotify_me(user_id: str = Query(...)):
