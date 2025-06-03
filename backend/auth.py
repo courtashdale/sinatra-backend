@@ -1,12 +1,16 @@
 # backend/auth.py
 
-from fastapi import Query, HTTPException
+from fastapi import Query, HTTPException, Request
 from backend.db import users_collection
 from backend.utils import get_spotify_oauth
 
 sp_oauth = get_spotify_oauth()
 
-def get_token(user_id: str = Query(...)) -> str:
+def get_token(request: Request) -> str:
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found in database")

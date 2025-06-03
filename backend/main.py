@@ -84,8 +84,10 @@ def login():
     return RedirectResponse(auth_url)
 
 @app.get("/user-playlists", tags=["user"])
-def get_user_playlists(user_id: str = Query(...)):
-    from backend.db import playlists_collection
+def get_user_playlists(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
 
     doc = playlists_collection.find_one({"user_id": user_id})
     if not doc:
@@ -97,23 +99,18 @@ def get_user_playlists(user_id: str = Query(...)):
         "playlists": doc.get("playlists", [])
     }
 
-@app.get("/all-playlists", tags=["user"])
-def get_all_user_playlists(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id}, {"playlists.all": 1})
-    if not user or "playlists.all" not in user:
-        return []
-
-    return user["playlists.all"]
-
-@app.get("/callback",tags=["routes"])
+@app.get("/callback")
 def callback(code: str):
     token_info = sp_oauth.get_access_token(code)
     access_token = token_info["access_token"]
     refresh_token = token_info["refresh_token"]
     expires_at = token_info["expires_at"]
+
     sp = spotipy.Spotify(auth=access_token)
-    user_profile = sp.current_user()
-    user_id = user_profile["id"]
+    user_data = sp.current_user()
+    user_id = user_data["id"]
+
+    # Store tokens in DB
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -122,25 +119,24 @@ def callback(code: str):
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "expires_at": expires_at,
-                "display_name": user_profile.get("display_name"),
-                "profile_picture": (
-                    user_profile["images"][0]["url"]
-                    if user_profile.get("images") and len(user_profile["images"]) > 0
-                    else "https://www.rollingstone.com/wp-content/uploads/2020/11/alex-trebek-obit.jpg?w=1600&h=900&crop=1"
-                ),
+                "display_name": user_data["display_name"],
+                "images": user_data["images"],
             }
         },
         upsert=True,
     )
-    print("🧪 NODE_ENV:", os.getenv("NODE_ENV"))
-    print("🧪 IS_DEV:", IS_DEV)
-    print("🧪 Redirecting to:", BASE_URL)
-    user = users_collection.find_one({"user_id": user_id})
-    frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
-    if user and user.get("registered"):
-        return RedirectResponse(f"{frontend_base}/home?user_id={user_id}")
-    else:
-        return RedirectResponse(f"{frontend_base}/onboard?user_id={user_id}")
+
+    # Redirect and set secure cookie
+    response = RedirectResponse(url="/home")
+    response.set_cookie(
+        key="user_id",
+        value=user_id,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        max_age=86400,
+    )
+    return response
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
@@ -225,7 +221,11 @@ def refresh(refresh_token: str = Query(...)):
 
 
 @app.get("/me", tags=["user"])
-def get_current_user(user_id: str = Query(...)):
+def get_current_user(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -235,94 +235,25 @@ def get_current_user(user_id: str = Query(...)):
         "display_name": user["display_name"],
         "email": user.get("email"),
         "profile_picture": user.get("profile_picture"),
-        "playlists.featured": user.get("playlists.featured", []),
+        "playlists.featured": user.get("playlists", {}).get("featured", []),
         "genre_analysis": user.get("genre_analysis"),
         "registered": user.get("registered", False),
     }
 
-@app.get("/playlists", tags=["user"])
-def get_playlists(
-    user_id: str = Query(...),
-    limit: int = Query(50, ge=1, le=50),
-    offset: int = Query(0, ge=0)
-):
-    access_token = get_token(user_id)
-    sp = spotipy.Spotify(auth=access_token)
-    raw = sp.current_user_playlists(limit=limit, offset=offset)
-
-    playlists = [
-        {
-            "id": p["id"],
-            "name": p["name"],
-            "owner": p["owner"]["id"],
-            "tracks": p["tracks"]["total"],
-            "image": p["images"][0]["url"] if p["images"] else None
-        }
-        for p in raw["items"]
-    ]
-
-    return {"items": playlists}
-
-@app.get("/users", tags=["user"])
-def get_users():
-    return list(
-        users_collection.find(
-            {}, {"_id": 0, "user_id": 1, "display_name": 1, "email": 1}
-        )
-    )
-
-@app.get("/top-tracks", tags=["user"])
-def get_top_tracks(
-    access_token: str = Depends(get_token),
-    limit: int = 10,
-    time_range: str = "medium_term",
-):
-    sp = spotipy.Spotify(auth=access_token)
-    top_tracks = sp.current_user_top_tracks(limit=limit, time_range=time_range)
-
-    artist_genre_cache = {}
-    simplified = []
-
-    for track in top_tracks["items"]:
-        genres = get_artist_genres(sp, track["artists"], artist_genre_cache)
-
-        simplified.append(
-            {
-                "name": track["name"],
-                "artists": [a["name"] for a in track["artists"]],
-                "album": track["album"]["name"],
-                "external_url": track["external_urls"]["spotify"],
-                "isrc": track.get("external_ids", {}).get("isrc"),
-                "genres": genres,
-            }
-        )
-
-    return {"top_tracks": simplified}
-
-@app.post("/play", tags=["playback"])
-def start_playback(access_token: str = Depends(get_token)):
-    sp = spotipy.Spotify(auth=access_token)
-    sp.start_playback()
-    return {"status": "playing"}
-
-
-@app.post("/pause", tags=["playback"])
-def pause_playback(access_token: str = Depends(get_token)):
-    sp = spotipy.Spotify(auth=access_token)
-    sp.pause_playback()
-    return {"status": "paused"}
-
 @app.get("/genres", tags=["user"])
-def get_genres(user_id: str = Query(...), refresh: bool = False):
+def get_genres(request: Request, refresh: bool = False):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     user = users_collection.find_one({"user_id": user_id})
     if not refresh and user and "genre_analysis" in user:
         return user["genre_analysis"]
 
     try:
-        access_token = get_token(user_id)
+        access_token = get_token(request)
         sp = spotipy.Spotify(auth=access_token)
 
-        # Fetch top 100 artists
         top_artists = []
         for offset in (0, 50):
             try:
@@ -331,14 +262,10 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
             except Exception as e:
                 print(f"⚠️ Failed to fetch top artists at offset {offset}: {e}")
 
-        # Extract genres from top artists only
         flat_genres = []
         for artist in top_artists:
             flat_genres.extend([g.strip().lower() for g in artist.get("genres", [])])
 
-        print("🎯 Combined raw genres from top 100 artists:", flat_genres[:20])
-
-        # Analyze genres
         raw_highest = genre_wizard.genre_highest(flat_genres)
         sub_genres_raw = genre_wizard.genre_frequency(flat_genres)
 
@@ -351,7 +278,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
             for genre, count in raw_highest.items()
         }
 
-        # Load genre map
         try:
             genre_map_path = os.path.join("backend", "music", "genre-map.json")
             with open(genre_map_path) as f:
@@ -359,7 +285,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to load genre map.")
 
-        # Sub-genres with gradients from their parent meta-genre
         sub_genres = {}
         total_subgenre_count = sum(sub_genres_raw.values()) or 1
 
@@ -372,7 +297,6 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
                 "gradient": get_gradient_for_genre(parent)
             }
 
-        # Top sub-genre (ignore if it's the same as its meta-genre)
         sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])
         top_sub = next((g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()), None)
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
@@ -402,19 +326,8 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
     except Exception as e:
         import traceback
-        traceback.print_exc()  # 👈 This shows the exact error in your terminal
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Genre analysis failed: {str(e)}")
-
-@app.get("/public-playlist/{playlist_id}", tags=["playlists"])
-def get_public_playlist(playlist_id: str):
-    match = users_collection.find_one(
-        {"playlists.all.playlist_id": playlist_id}, {"playlists.all.$": 1}
-    )
-    if not match or "playlists.all" not in match:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-
-    return match["playlists.all"][0]
-
 
 @app.get("/playlist-info", tags=["playlists"])
 def get_playlist_info(user_id: str = Query(...), playlist_id: str = Query(...)):
@@ -471,45 +384,16 @@ def health_check():
     except ConnectionFailure:
         return {"status": "error", "db": "disconnected"}
 
-@app.post("/admin/backfill-playlist-metadata", tags=["admin"])
-def backfill_playlist_metadata():
-    users = users_collection.find({"playlists.all": {"$exists": True}})
-
-    updated = 0
-
-    for user in users:
-        access_token = user.get("access_token")
-        if not access_token:
-            continue
-
-        sp = spotipy.Spotify(auth=access_token)
-        updated_playlists = []
-
-        for pl in user.get("playlists.all", []):
-            try:
-                playlist = sp.playlist(pl["playlist_id"])
-                pl["track_count"] = playlist["tracks"]["total"]
-                pl["external_url"] = playlist["external_urls"]["spotify"]
-                updated_playlists.append(pl)
-            except Exception as e:
-                print(f"⚠️ Failed to update playlist {pl['playlist_id']}: {e}")
-                continue
-
-        users_collection.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {"playlists.all": updated_playlists}},
-        )
-        updated += 1
-
-    return {"status": "ok", "users_updated": updated}
-
 @app.get("/dashboard", tags=["user"])
-def get_dashboard(user_id: str = Query(...)):
+def get_dashboard(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get genre analysis, playlists, playback
     genre_analysis = user.get("genre_analysis")
     last_played = user.get("last_played_track")
     all_playlists = user.get("playlists", {}).get("all", [])
@@ -557,8 +441,12 @@ def public_profile(user_id: str):
     }
 
 @app.post("/add-playlists", tags=["user"])
-def add_playlists(data: SaveAllPlaylistsRequest):
-    access_token = get_token(data.user_id)
+def add_playlists(request: Request, data: SaveAllPlaylistsRequest):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
+    access_token = get_token(request)
     sp = spotipy.Spotify(auth=access_token)
 
     enriched = []
@@ -581,7 +469,7 @@ def add_playlists(data: SaveAllPlaylistsRequest):
         raise HTTPException(status_code=400, detail="No valid playlists to add")
 
     result = users_collection.update_one(
-        {"user_id": data.user_id},
+        {"user_id": user_id},
         {
             "$addToSet": {
                 "playlists.all": {"$each": enriched}
@@ -593,14 +481,13 @@ def add_playlists(data: SaveAllPlaylistsRequest):
     return {"status": "added", "modified_count": result.modified_count}
 
 @app.post("/update-featured", tags=["user"])
-def update_featured_playlists(data: dict):
-    user_id = data.get("user_id")
+def update_featured_playlists(request: Request, data: dict = Body(...)):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     playlist_ids = data.get("playlist_ids")
-
-    print(f"🔄 Incoming update-featured request for user: {user_id}")
-    print(f"📦 Playlist IDs received: {playlist_ids}")
-
-    if not user_id or not isinstance(playlist_ids, list):
+    if not isinstance(playlist_ids, list):
         raise HTTPException(status_code=400, detail="Invalid input")
 
     user = users_collection.find_one({"user_id": user_id})
@@ -608,31 +495,31 @@ def update_featured_playlists(data: dict):
         raise HTTPException(status_code=404, detail="User not found")
 
     all_playlists = user.get("playlists", {}).get("all", [])
-    known_ids = {pl.get("id") for pl in all_playlists}  # 🔧 use 'id' not 'playlist_id'
+    known_ids = {pl.get("id") for pl in all_playlists}
 
     normalized_ids = [pid for pid in playlist_ids if pid in known_ids]
-
-    print("✅ Normalized featured playlist_ids:", normalized_ids)
 
     users_collection.update_one(
         {"user_id": user_id},
         {"$set": {"playlists.featured": normalized_ids}}
     )
 
-    print("💾 MongoDB update complete.\n")
     return {"status": "ok", "count": len(normalized_ids)}
 
 @app.post("/delete-playlists", tags=["user"])
-def delete_playlists(data: SaveAllPlaylistsRequest):
+def delete_playlists(request: Request, data: SaveAllPlaylistsRequest):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
     playlist_ids = [pl.id for pl in data.playlists]
-    print("🗑️ Deleting playlists:", playlist_ids, "for user:", data.user_id)
 
     result = users_collection.update_one(
-        {"user_id": data.user_id},
+        {"user_id": user_id},
         {
             "$pull": {
                 "playlists.all": {
-                    "id": {"$in": playlist_ids}  # <-- Fix is here
+                    "id": {"$in": playlist_ids}
                 }
             }
         }
@@ -666,19 +553,18 @@ def get_spotify_me(user_id: str = Query(...)):
         raise HTTPException(status_code=401, detail="Failed to fetch Spotify user profile.")
     
 @app.post("/register", tags=["user"])
-def register_user(data: dict = Body(...)):
-    user_id = data.get("user_id") or data.get("id")
+def register_user(request: Request, data: dict = Body(...)):
+    user_id = request.cookies.get("user_id")
     if not user_id:
-        raise HTTPException(status_code=400, detail="Missing user_id")
+        raise HTTPException(status_code=401, detail="Missing user session")
 
     display_name = data.get("display_name")
     profile_picture = data.get("profile_picture")
     selected_playlists = data.get("selected_playlists", [])
     featured_ids = [p.get("id") for p in data.get("featured_playlists", [])]
 
-    sp = spotipy.Spotify(auth=get_token(user_id))
+    sp = spotipy.Spotify(auth=get_token(request))
 
-    # Enrich playlist metadata
     enriched = []
     for pl in selected_playlists:
         try:
@@ -694,7 +580,6 @@ def register_user(data: dict = Body(...)):
             print(f"⚠️ Failed to enrich playlist {pl['id']}: {e}")
             continue
 
-    # Save to Mongo
     user_doc = {
         "user_id": user_id,
         "display_name": display_name,
@@ -713,7 +598,6 @@ def register_user(data: dict = Body(...)):
         upsert=True
     )
 
-    # 🔁 Trigger playback analysis
     try:
         playback = sp.current_playback()
         if playback and playback.get("item"):
@@ -734,9 +618,8 @@ def register_user(data: dict = Body(...)):
     except Exception as e:
         print("⚠️ Playback fetch failed:", e)
 
-    # 🎯 Trigger genre analysis
     try:
-        get_genres(user_id=user_id, refresh=True)
+        get_genres(request, refresh=True)
     except Exception as e:
         print("⚠️ Genre analysis failed during registration:", e)
 
