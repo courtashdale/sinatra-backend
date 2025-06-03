@@ -16,9 +16,12 @@ from typing import List
 # -- fastAPI
 from fastapi import FastAPI, Depends, Query, HTTPException, Body, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
+from fastapi import Response
+import secrets
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Body
+from spotipy.oauth2 import SpotifyOAuth
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
@@ -78,10 +81,22 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 # --- FastAPI endpoints
 
-@app.get("/login",tags=["routes"])
-def login():
-    auth_url = sp_oauth.get_authorize_url()
-    return RedirectResponse(auth_url)
+@app.get("/login", tags=["routes"])
+def login(response: Response):
+    state = secrets.token_urlsafe(16)  # 🛡️ CSRF-safe random string
+    auth_url = sp_oauth.get_authorize_url(state)
+
+    # Store it in a cookie for callback validation
+    response = RedirectResponse(auth_url)
+    response.set_cookie(
+        key="spotify_state",
+        value=state,
+        max_age=600,
+        httponly=True,
+        secure=not IS_DEV,
+        samesite="lax"
+    )
+    return response
 
 @app.get("/user-playlists", tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
@@ -105,15 +120,21 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
     return user["playlists.all"]
 
-@app.get("/callback",tags=["routes"])
-def callback(code: str):
+@app.get("/callback", tags=["routes"])
+def callback(request: Request, code: str, state: str = ""):
+    cookie_state = request.cookies.get("spotify_state")
+    if state != cookie_state:
+        raise HTTPException(status_code=400, detail="State mismatch. Possible CSRF.")
+
     token_info = sp_oauth.get_access_token(code)
     access_token = token_info["access_token"]
     refresh_token = token_info["refresh_token"]
     expires_at = token_info["expires_at"]
+
     sp = spotipy.Spotify(auth=access_token)
     user_profile = sp.current_user()
     user_id = user_profile["id"]
+
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -132,15 +153,15 @@ def callback(code: str):
         },
         upsert=True,
     )
-    print("🧪 NODE_ENV:", os.getenv("NODE_ENV"))
-    print("🧪 IS_DEV:", IS_DEV)
-    print("🧪 Redirecting to:", BASE_URL)
-    user = users_collection.find_one({"user_id": user_id})
+
     frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
-    if user and user.get("registered"):
-        return RedirectResponse(f"{frontend_base}/home?user_id={user_id}")
-    else:
-        return RedirectResponse(f"{frontend_base}/onboard?user_id={user_id}")
+    redirect_path = "/home" if users_collection.find_one({"user_id": user_id, "registered": True}) else "/onboard"
+    final_url = f"{frontend_base}{redirect_path}?user_id={user_id}"
+
+    # ✅ Construct and return response with cookie deletion
+    response = RedirectResponse(final_url)
+    response.delete_cookie("spotify_state")
+    return response
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
