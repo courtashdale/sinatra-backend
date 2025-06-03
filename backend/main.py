@@ -136,7 +136,7 @@ def callback(code: str):
     print("🧪 IS_DEV:", IS_DEV)
     print("🧪 Redirecting to:", BASE_URL)
     user = users_collection.find_one({"user_id": user_id})
-    frontend_base = "http://localhost:5173" if IS_DEV else BASE_URL
+    frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
     if user and user.get("registered"):
         return RedirectResponse(f"{frontend_base}/home?user_id={user_id}")
     else:
