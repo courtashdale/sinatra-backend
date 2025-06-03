@@ -4,8 +4,6 @@ from fastapi import Query, HTTPException
 from backend.db import users_collection
 from backend.utils import get_spotify_oauth
 
-sp_oauth = get_spotify_oauth()
-
 def get_token(user_id: str = Query(...)) -> str:
     user = users_collection.find_one({"user_id": user_id})
     if not user:
@@ -19,6 +17,7 @@ def get_token(user_id: str = Query(...)) -> str:
 
     if not all(token_info.values()):
         raise HTTPException(status_code=400, detail="User token info incomplete")
+    sp_oauth = get_spotify_oauth()
 
     if sp_oauth.is_token_expired(token_info):
         refreshed = sp_oauth.refresh_access_token(user["refresh_token"])

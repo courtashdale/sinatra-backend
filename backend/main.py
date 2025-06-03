@@ -31,6 +31,7 @@ from backend.music import genre_wizard
 from backend.music.genre_wizard import META_GENRES, filter_sub_genres
 from backend.music.meta_gradients import get_gradient_for_genre
 
+
 app = FastAPI()
 
 IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
@@ -51,8 +52,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-sp_oauth = get_spotify_oauth()
 
 # ---- Classes
 
@@ -81,22 +80,15 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 # --- FastAPI endpoints
 
-@app.get("/login", tags=["auth"])
-def login():
+@app.get("/login")
+async def login(request: Request):
     state = secrets.token_urlsafe(16)
-    auth_url = sp_oauth.get_authorize_url(state)
+    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
+    print("🔒 Using redirect_uri:", redirect_uri)
 
-    response = RedirectResponse(auth_url)
-    response.set_cookie(
-        key="spotify_state",
-        value=state,
-        httponly=True,
-        secure=not IS_DEV,
-        samesite="lax",
-        max_age=600,
-        path="/"
-    )
-    return response
+    sp_oauth = get_spotify_oauth(redirect_uri)
+    auth_url = sp_oauth.get_authorize_url(state=state)
+    return RedirectResponse(auth_url)
 
 @app.get("/user-playlists", tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
@@ -120,48 +112,48 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
     return user["playlists.all"]
 
-@app.get("/callback", tags=["routes"])
-def callback(request: Request, code: str, state: str = ""):
-    cookie_state = request.cookies.get("spotify_state")
-    if state != cookie_state:
-        raise HTTPException(status_code=400, detail="State mismatch. Possible CSRF.")
+@app.get("/callback")
+async def callback(request: Request):
+    IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
+    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
+    print(f"🔒 Using redirect_uri: {redirect_uri}")
 
-    token_info = sp_oauth.get_access_token(code)
-    access_token = token_info["access_token"]
-    refresh_token = token_info["refresh_token"]
-    expires_at = token_info["expires_at"]
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code.")
+
+    sp_oauth = get_spotify_oauth(redirect_uri)
+
+    try:
+        token_info = sp_oauth.get_access_token(code, as_dict=True)
+        access_token = token_info["access_token"]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
 
     sp = spotipy.Spotify(auth=access_token)
-    user_profile = sp.current_user()
-    user_id = user_profile["id"]
+    profile = sp.me()
+    user_id = profile["id"]
 
+    # 💾 Save token info
     users_collection.update_one(
         {"user_id": user_id},
         {
             "$set": {
-                "user_id": user_id,
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": expires_at,
-                "display_name": user_profile.get("display_name"),
-                "profile_picture": (
-                    user_profile["images"][0]["url"]
-                    if user_profile.get("images") and len(user_profile["images"]) > 0
-                    else "https://www.rollingstone.com/wp-content/uploads/2020/11/alex-trebek-obit.jpg?w=1600&h=900&crop=1"
-                ),
+                "access_token": token_info["access_token"],
+                "refresh_token": token_info["refresh_token"],
+                "expires_at": token_info["expires_at"],
             }
         },
         upsert=True,
     )
 
+    # ✅ Redirect to frontend
     frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
-    redirect_path = "/home" if users_collection.find_one({"user_id": user_id, "registered": True}) else "/onboard"
-    final_url = f"{frontend_base}{redirect_path}?user_id={user_id}"
+    print(f"🏠 Redirecting to frontend_base = {frontend_base}")
 
-    # ✅ Construct and return response with cookie deletion
-    response = RedirectResponse(final_url)
-    response.delete_cookie("spotify_state")
-    return response
+    return RedirectResponse(f"{frontend_base}/auth?user_id={user_id}")
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
@@ -238,6 +230,7 @@ def get_playback_state(
 
 @app.get("/refresh_token", tags=["auth"])
 def refresh(refresh_token: str = Query(...)):
+    sp_oauth = get_spotify_oauth()  # ← fix here
     refreshed = sp_oauth.refresh_access_token(refresh_token)
     return {
         "access_token": refreshed["access_token"],
@@ -468,6 +461,7 @@ def refresh_session(user_id: str = Query(...)):
         "refresh_token": user["refresh_token"],
         "expires_at": user["expires_at"],
     }
+    sp_oauth = get_spotify_oauth()
     if sp_oauth.is_token_expired(token_info):
         refreshed = sp_oauth.refresh_access_token(user["refresh_token"])
         users_collection.update_one(
