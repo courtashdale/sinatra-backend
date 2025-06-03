@@ -81,20 +81,20 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 # --- FastAPI endpoints
 
-@app.get("/login", tags=["routes"])
-def login(response: Response):
-    state = secrets.token_urlsafe(16)  # 🛡️ CSRF-safe random string
+@app.get("/login", tags=["auth"])
+def login():
+    state = secrets.token_urlsafe(16)
     auth_url = sp_oauth.get_authorize_url(state)
 
-    # Store it in a cookie for callback validation
     response = RedirectResponse(auth_url)
     response.set_cookie(
         key="spotify_state",
         value=state,
-        max_age=600,
         httponly=True,
         secure=not IS_DEV,
-        samesite="lax"
+        samesite="lax",
+        max_age=600,
+        path="/"
     )
     return response
 
