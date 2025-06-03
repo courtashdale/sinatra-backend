@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Body
 from spotipy.oauth2 import SpotifyOAuth
+from fastapi import Request, HTTPException
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
@@ -116,12 +117,14 @@ def get_all_user_playlists(user_id: str = Query(...)):
 async def callback(request: Request):
     IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
     redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
+    frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
     print(f"🔒 Using redirect_uri: {redirect_uri}")
 
     code = request.query_params.get("code")
     state = request.query_params.get("state")
 
     if not code:
+        print("❌ /callback missing code")
         raise HTTPException(status_code=400, detail="Missing authorization code.")
 
     sp_oauth = get_spotify_oauth(redirect_uri)
@@ -130,11 +133,14 @@ async def callback(request: Request):
         token_info = sp_oauth.get_access_token(code, as_dict=True)
         access_token = token_info["access_token"]
     except Exception as e:
+        print("❌ Token exchange failed:", e)
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
 
     sp = spotipy.Spotify(auth=access_token)
-    profile = sp.me()
+    profile = sp.current_user()
     user_id = profile["id"]
+
+    print(f"🎯 /callback resolved Spotify user_id = {user_id} — setting cookie")
 
     # 💾 Save token info
     users_collection.update_one(
@@ -149,11 +155,18 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    # ✅ Redirect to frontend
-    frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
-    print(f"🏠 Redirecting to frontend_base = {frontend_base}")
-
-    return RedirectResponse(f"{frontend_base}/auth?user_id={user_id}")
+    # ✅ Set secure, HTTP-only cookie
+    response = RedirectResponse(f"{frontend_base}/auth")
+    response.set_cookie(
+        key="sinatra_user_id",
+        value=user_id,
+        httponly=True,
+        secure=not IS_DEV,
+        samesite="Lax",
+        max_age=3600 * 24 * 7  # 7 days
+    )
+    print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
+    return response
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
@@ -239,11 +252,19 @@ def refresh(refresh_token: str = Query(...)):
 
 
 @app.get("/me", tags=["user"])
-def get_current_user(user_id: str = Query(...)):
+def get_current_user(request: Request):
+    user_id = request.cookies.get("sinatra_user_id")
+    print(f"🍪 /me cookie received: sinatra_user_id = {user_id}")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
     user = users_collection.find_one({"user_id": user_id})
     if not user:
+        print(f"❌ /me user not found for user_id: {user_id}")
         raise HTTPException(status_code=404, detail="User not found")
 
+    print(f"✅ /me success for user_id: {user_id}")
     return {
         "user_id": user["user_id"],
         "display_name": user["display_name"],
@@ -518,33 +539,27 @@ def backfill_playlist_metadata():
 
     return {"status": "ok", "users_updated": updated}
 
-@app.get("/dashboard", tags=["user"])
-def get_dashboard(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id})
-    if not user:
+@app.get("/dashboard")
+async def get_dashboard(request: Request):
+    user_id = request.cookies.get("sinatra_user_id")
+    print(f"🍪 /dashboard cookie received: sinatra_user_id = {user_id}")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
+    doc = users_collection.find_one({"user_id": user_id})  # 🛠️ Fix: was {"id": user_id}
+    if not doc:
+        print(f"❌ /dashboard: user not found in DB for user_id = {user_id}")
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get genre analysis, playlists, playback
-    genre_analysis = user.get("genre_analysis")
-    last_played = user.get("last_played_track")
-    all_playlists = user.get("playlists", {}).get("all", [])
-    featured_playlists = user.get("playlists", {}).get("featured", [])
-
+    print(f"✅ /dashboard success for user_id = {user_id}")
     return {
-        "user": {
-            "user_id": user["user_id"],
-            "display_name": user.get("display_name"),
-            "profile_picture": user.get("profile_picture", ""),
-            "genre_analysis": genre_analysis or {},
-        },
-        "playlists": {
-            "featured": [
-                pl for pl in all_playlists
-                if pl.get("id") in featured_playlists
-            ],
-            "all": all_playlists,
-        },
-        "played_track": last_played,
+        "id": user_id,
+        "display_name": doc.get("display_name"),
+        "profile_picture": doc.get("profile_picture"),
+        "playlists": doc.get("playlists", {}),
+        "genres": doc.get("genres", {}),
+        "last_played": doc.get("last_played", {}),
     }
 
 @app.get("/public-profile/{user_id}")
