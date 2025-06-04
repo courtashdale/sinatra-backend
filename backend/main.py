@@ -8,12 +8,11 @@ from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from fastapi import Request
 from typing import List
 
 # -- fastAPI
-from fastapi import FastAPI, Depends, Query, HTTPException, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Depends, Query, HTTPException, HTTPException, Request
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # -- backend
@@ -139,6 +138,7 @@ def callback(code: str):
     user_data = sp.current_user()
     user_id = user_data["id"]
 
+    # Save base user auth/session info
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -154,6 +154,58 @@ def callback(code: str):
         upsert=True,
     )
 
+    # Check if already registered
+    existing = users_collection.find_one({"user_id": user_id})
+    if not existing or not existing.get("registered"):
+        # Auto-sync playlists
+        enriched = []
+        try:
+            user_profile = sp.current_user()
+            spotify_user_id = user_profile["id"]
+            offset = 0
+            limit = 50
+            while True:
+                page = sp.current_user_playlists(limit=limit, offset=offset)
+                items = page.get("items", [])
+                if not items:
+                    break
+                for p in items:
+                    if p["owner"]["id"] != spotify_user_id or p["tracks"]["total"] < 4:
+                        continue
+                    enriched.append({
+                        "id": p["id"],
+                        "name": p["name"],
+                        "image": p["images"][0]["url"] if p["images"] else None,
+                        "tracks": p["tracks"]["total"],
+                        "external_url": p["external_urls"]["spotify"]
+                    })
+                offset += limit
+        except Exception as e:
+            print("⚠️ Playlist sync error:", e)
+
+        users_collection.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "playlists.all": enriched,
+                    "playlists.featured": [p["id"] for p in enriched[:3]],
+                    "display_name": user_data["display_name"],
+                    "profile_picture": user_data["images"][0]["url"] if user_data["images"] else "",
+                    "registered": True,
+                    "created_at": datetime.utcnow(),
+                }
+            }
+        )
+
+        try:
+            # Also trigger genre analysis and playback store
+            request = Request(scope={"type": "http", "headers": []})
+            request._cookies = {"user_id": user_id}  # spoof request for internal use
+            get_genres(request, refresh=True)
+        except Exception as e:
+            print("⚠️ Genre analysis during auto-register failed:", e)
+
+    # Set session and redirect
     response = RedirectResponse(url=get_frontend_home_url())
     response.set_cookie(
         key="user_id",
@@ -163,6 +215,8 @@ def callback(code: str):
         samesite="Lax",
         max_age=86400,
     )
+
+    
     return response
 
 @app.get("/recently-played", tags=["playback"])
@@ -368,12 +422,21 @@ def get_genres(request: Request, refresh: bool = False):
         raise HTTPException(status_code=500, detail=f"Genre analysis failed: {str(e)}")
 
 
-@app.delete("/delete-user",tags=["mongodb"])
-def delete_user(user_id: str = Query(...)):
-    result = users_collection.delete_one({"user_id": user_id})
-    if result.deleted_count == 0:
+@app.delete("/delete-user", tags=["mongodb"])
+def delete_user(request: Request, user_id: str = Query(...)):
+    # Clean up user data in all collections
+    user_result = users_collection.delete_one({"user_id": user_id})
+    playlist_result = playlists_collection.delete_one({"user_id": user_id})
+
+    if user_result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "deleted"}
+
+    # Clear the session cookie if deleting own account
+    response = JSONResponse(content={"status": "deleted", "user_id": user_id})
+    if request.cookies.get("sinatra_user_id") == user_id:
+        response.delete_cookie("sinatra_user_id")
+
+    return response
 
 
 @app.get("/refresh-session", tags=["routes"])
@@ -719,4 +782,20 @@ def sync_playlists(request: Request):
         "user_id": user_id,
         "total_playlists_fetched": total_fetched,
         "total_playlists_saved": len(all_playlists)
+    }
+
+@app.get("/synced-playlists", tags=["admin"])
+def get_synced_playlists(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing user session")
+
+    doc = playlists_collection.find_one({"user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No synced playlists found.")
+
+    return {
+        "user_id": user_id,
+        "last_updated": doc.get("last_updated"),
+        "playlists": doc.get("playlists", [])
     }
