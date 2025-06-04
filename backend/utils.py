@@ -33,12 +33,14 @@ for var in required_env_vars:
 
 CALLBACK_URL = os.getenv(CALLBACK_KEY)
 
-def get_spotify_oauth():
+def get_spotify_oauth(redirect_uri: str = None):
     return SpotifyOAuth(
         client_id=os.getenv("SPOTIFY_CLIENT_ID"),
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
-        redirect_uri=CALLBACK_URL,
-        scope="user-read-private user-read-email user-read-playback-state user-modify-playback-state playlist-read-private user-top-read user-read-recently-played",
+        redirect_uri=redirect_uri or os.getenv("PRO_CALLBACK"),
+        scope="user-read-private user-read-email user-top-read user-read-recently-played user-read-playback-state streaming playlist-read-private",
+        cache_path=None,
+        show_dialog=True
     )
 
 def get_artist_genres(sp, artists, cache):
