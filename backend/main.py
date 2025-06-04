@@ -8,30 +8,28 @@ from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from starlette.requests import Request
 from fastapi import Request
-from pathlib import Path
 from typing import List
 
 # -- fastAPI
-from fastapi import FastAPI, Depends, Query, HTTPException, Body, HTTPException
-from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Depends, Query, HTTPException, HTTPException
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Body
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
 from backend.db import users_collection, client, playlists_collection
 from backend.auth import get_token
 from backend.music import genre_wizard
-from backend.music.genre_wizard import META_GENRES, filter_sub_genres
 from backend.music.meta_gradients import get_gradient_for_genre
 
 app = FastAPI()
 
 IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
 BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
+
+def get_frontend_home_url() -> str:
+    return "http://localhost:5173/home" if IS_DEV else "https://sinatra.live/home"
 
 # -- website
 origins = [
@@ -111,26 +109,44 @@ def get_user_playlists(request: Request, user_id: str = Query(None)):
         "playlists": doc.get("playlists", [])
     }
 
+
+@app.get("/impersonate", tags=["admin"])
+def impersonate_user(request: Request):
+    current_user_id = request.cookies.get("user_id")
+    if not current_user_id:
+        raise HTTPException(status_code=400, detail="No current session to toggle")
+
+    target_user_id = "courtad123" if current_user_id == "amborn02" else "amborn02"
+    user = users_collection.find_one({"user_id": target_user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    response = RedirectResponse(url=get_frontend_home_url())
+    response.set_cookie(
+        key="user_id",
+        value=target_user_id,
+        httponly=True,
+        secure=False,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
 @app.get("/callback")
 def callback(code: str):
     token_info = sp_oauth.get_access_token(code)
-    access_token = token_info["access_token"]
-    refresh_token = token_info["refresh_token"]
-    expires_at = token_info["expires_at"]
-
-    sp = spotipy.Spotify(auth=access_token)
+    sp = spotipy.Spotify(auth=token_info["access_token"])
     user_data = sp.current_user()
     user_id = user_data["id"]
 
-    # Store tokens in DB
     users_collection.update_one(
         {"user_id": user_id},
         {
             "$set": {
                 "user_id": user_id,
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": expires_at,
+                "access_token": token_info["access_token"],
+                "refresh_token": token_info["refresh_token"],
+                "expires_at": token_info["expires_at"],
                 "display_name": user_data["display_name"],
                 "images": user_data["images"],
             }
@@ -138,8 +154,7 @@ def callback(code: str):
         upsert=True,
     )
 
-    # Redirect and set secure cookie
-    response = RedirectResponse(url="/home")
+    response = RedirectResponse(url=get_frontend_home_url())
     response.set_cookie(
         key="user_id",
         value=user_id,
@@ -401,8 +416,8 @@ def health_check():
     try:
         client.admin.command("ping")
         return {"status": "ok", "db": "connected"}
-    except ConnectionFailure:
-        return {"status": "error", "db": "disconnected"}
+    except Exception as e:
+        return {"status": "fail", "db": "unreachable", "error": str(e)}
 
 @app.get("/dashboard", tags=["user"])
 def get_dashboard(request: Request):
