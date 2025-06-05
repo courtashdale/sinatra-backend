@@ -5,7 +5,9 @@ import os
 import spotipy
 import json
 import requests
+from starlette.middleware.cors import CORSMiddleware
 import logging
+
 from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
@@ -29,7 +31,6 @@ from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi import Response
 import secrets
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Body
 from spotipy.oauth2 import SpotifyOAuth
 from fastapi import Request, HTTPException
@@ -58,10 +59,13 @@ origins = [
 # -- middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "https://sinatra.live",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["set-cookie"],
 )
 
 # ---- Classes
