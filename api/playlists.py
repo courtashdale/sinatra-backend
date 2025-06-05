@@ -6,7 +6,7 @@ from typing import List
 import spotipy
 
 from db.mongo import users_collection, playlists_collection
-from backend.auth import get_token
+from services.token import get_token
 
 router = APIRouter(tags=["playlists"])
 

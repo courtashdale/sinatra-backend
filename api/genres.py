@@ -1,10 +1,10 @@
 # api/genres.py
 from fastapi import APIRouter, Query, HTTPException
 from db.mongo import users_collection
-from backend.auth import get_token
-from backend.utils import get_spotify_oauth
-from backend.music import genre_wizard
-from backend.music.meta_gradients import get_gradient_for_genre
+from services.token import get_token
+from services.spotify_auth import get_spotify_oauth
+from music import genre_wizard
+from music.meta_gradients import get_gradient_for_genre
 from datetime import datetime, timezone
 import os, json, traceback
 

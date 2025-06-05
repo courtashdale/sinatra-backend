@@ -1,7 +1,7 @@
 # services/spotify.py
 import spotipy
-from backend.auth import get_token
-from backend.utils import get_artist_genres
+from services.token import get_token
+from services.spotify_auth import get_artist_genres
 
 
 def get_spotify_client(user_id: str) -> spotipy.Spotify:

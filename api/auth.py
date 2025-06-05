@@ -3,7 +3,7 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 import base64, json, os
 import spotipy
-from backend.utils import get_spotify_oauth
+from services.spotify_auth import get_spotify_oauth
 from db.mongo import users_collection
 from services.token import refresh_user_token
 

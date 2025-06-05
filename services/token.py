@@ -1,13 +1,12 @@
 # services/token.py
 from fastapi import HTTPException
-from backend.utils import get_spotify_oauth
+from services.spotify_auth import get_spotify_oauth
 from db.mongo import users_collection
 
-
-def refresh_user_token(user_id: str) -> dict:
+def get_token(user_id: str) -> str:
     user = users_collection.find_one({"user_id": user_id})
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found in database")
 
     token_info = {
         "access_token": user.get("access_token"),
@@ -21,7 +20,7 @@ def refresh_user_token(user_id: str) -> dict:
     sp_oauth = get_spotify_oauth()
 
     if sp_oauth.is_token_expired(token_info):
-        refreshed = sp_oauth.refresh_access_token(token_info["refresh_token"])
+        refreshed = sp_oauth.refresh_access_token(user["refresh_token"])
         users_collection.update_one(
             {"user_id": user_id},
             {
@@ -32,6 +31,10 @@ def refresh_user_token(user_id: str) -> dict:
                 }
             },
         )
-        return {"status": "refreshed"}
+        return refreshed["access_token"]
 
+    return token_info["access_token"]
+
+def refresh_user_token(user_id: str) -> dict:
+    _ = get_token(user_id)
     return {"status": "ok"}

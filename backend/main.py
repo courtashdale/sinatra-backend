@@ -41,10 +41,10 @@ from fastapi.responses import HTMLResponse
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
 from backend.db import users_collection, client, playlists_collection
-from backend.auth import get_token
+from services.token import get_token
 from backend.music import genre_wizard
 from backend.music.genre_wizard import META_GENRES, filter_sub_genres
-from backend.music.meta_gradients import get_gradient_for_genre
+from music.meta_gradients import get_gradient_for_genre
 
 
 app = FastAPI()

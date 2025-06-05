@@ -1,7 +1,7 @@
 # api/user.py
 from fastapi import APIRouter, Request, HTTPException, Query, Body
 from db.mongo import users_collection
-from backend.auth import get_token
+from services.token import get_token
 from datetime import datetime
 import spotipy
 

@@ -3,8 +3,8 @@ from fastapi import APIRouter, Query, Depends, HTTPException
 from spotipy.exceptions import SpotifyException
 import spotipy
 
-from backend.auth import get_token
-from backend.utils import get_artist_genres
+from services.token import get_token
+from services.spotify_auth import get_artist_genres
 
 router = APIRouter(tags=["spotify"])
 

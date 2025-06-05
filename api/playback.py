@@ -3,8 +3,8 @@ from fastapi import APIRouter, Query, Depends, HTTPException
 import spotipy
 
 from db.mongo import users_collection
-from backend.auth import get_token
-from backend.utils import get_artist_genres
+from services.token import get_token
+from services.spotify_auth import get_artist_genres
 
 router = APIRouter(tags=["playback"])
 

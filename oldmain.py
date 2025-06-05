@@ -31,13 +31,6 @@ app = FastAPI()
 IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
 BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
 
-# -- website
-origins = [
-    "http://localhost:5173",  # local dev
-    "https://sinatra.live",  # custom domain
-    "https://sinatra.vercel.app",  # optional fallback
-]
-
 # ---- Classes
 
 

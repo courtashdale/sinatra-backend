@@ -1,9 +1,10 @@
 # api/admin.py
 from fastapi import APIRouter, Query, HTTPException
 from db.mongo import users_collection, playlists_collection
-from backend.auth import get_token
+from services.token import get_token
 from datetime import datetime, timezone
 import spotipy
+from services.spotify import get_spotify_client
 
 router = APIRouter(tags=["admin"])
 
@@ -41,8 +42,7 @@ def backfill_playlist_metadata():
 
 @router.post("/admin/sync_playlists")
 def sync_playlists(user_id: str = Query(...)):
-    access_token = get_token(user_id)
-    sp = spotipy.Spotify(auth=access_token)
+    sp = get_spotify_client(user_id)
 
     all_playlists = []
     offset = 0

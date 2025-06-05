@@ -2,7 +2,7 @@
 import json, os
 from collections import defaultdict
 from backend.music import genre_wizard
-from backend.music.meta_gradients import get_gradient_for_genre
+from music.meta_gradients import get_gradient_for_genre
 
 
 def load_genre_map():

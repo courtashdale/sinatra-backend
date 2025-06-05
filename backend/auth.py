@@ -2,7 +2,7 @@
 
 from fastapi import Query, HTTPException
 from backend.db import users_collection
-from backend.utils import get_spotify_oauth
+from services.spotify_auth import get_spotify_oauth
 
 
 def get_token(user_id: str = Query(...)) -> str:
