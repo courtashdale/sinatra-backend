@@ -189,7 +189,17 @@ async def callback(request: Request):
     )
 
     # ✅ Set cookie and redirect
-    response = RedirectResponse(f"{frontend_base}/?user_id={user_id}")
+    response = RedirectResponse(f"{frontend_base}/home")  # or "/" if that’s your landing page
+    response.set_cookie(
+        key="sinatra_user_id",
+        value=user_id,
+        httponly=True,
+        secure=True,
+        samesite="None",  # Required for cross-site cookies
+        path="/",
+        domain=".sinatra.live",  # Important: allows subdomain access from frontend/backend
+        max_age=3600 * 24 * 7,
+    )
     return response
 
 @app.get("/recently-played", tags=["playback"])
