@@ -162,7 +162,7 @@ async def callback(request: Request):
         value=user_id,
         httponly=True,
         secure=not IS_DEV,
-        samesite="Lax",
+        samesite="None",
         max_age=3600 * 24 * 7  # 7 days
     )
     print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
