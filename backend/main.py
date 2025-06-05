@@ -183,7 +183,7 @@ async def callback(request: Request):
     )
 
     # ✅ Set cookie and redirect
-    response = RedirectResponse(f"{frontend_base}/auth")
+    response = RedirectResponse(f"{frontend_base}/")
     response.set_cookie(
         key="sinatra_user_id",
         value=user_id,
