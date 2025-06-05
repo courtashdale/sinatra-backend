@@ -5,10 +5,11 @@ import os
 import spotipy
 import json
 import requests
-from starlette.middleware.cors import CORSMiddleware
 import logging
+import base64
 
 from spotipy.exceptions import SpotifyException
+from starlette.middleware.cors import CORSMiddleware
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -105,10 +106,12 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 
 @app.get("/login")
-async def login(request: Request, redirect_uri: str = Query(...)):
-    state = secrets.token_urlsafe(16)
+async def login(redirect_uri: str = Query(...)):
+    state_payload = json.dumps({"redirect_uri": redirect_uri})
+    encoded_state = base64.urlsafe_b64encode(state_payload.encode()).decode()
+
     sp_oauth = get_spotify_oauth(redirect_uri)
-    auth_url = sp_oauth.get_authorize_url(state=state)
+    auth_url = sp_oauth.get_authorize_url(state=encoded_state)
     return RedirectResponse(auth_url)
 
 
@@ -140,19 +143,22 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
 @app.get("/callback")
 async def callback(request: Request):
-    IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
-    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
-    frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
+    import base64
+    import json
 
+    encoded_state = request.query_params.get("state")
     code = request.query_params.get("code")
-    state = request.query_params.get("state")
 
-    print(f"🌀 Received code: {code}")
-    print(f"🌀 Received state: {state}")
-    print(f"🔒 Using redirect_uri: {redirect_uri}")
+    if not code or not encoded_state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
 
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code.")
+    try:
+        decoded = base64.urlsafe_b64decode(encoded_state).decode()
+        redirect_uri = json.loads(decoded)["redirect_uri"]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to decode state: {e}")
+
+    print(f"🌀 Using redirect_uri from state: {redirect_uri}")
 
     sp_oauth = get_spotify_oauth(redirect_uri)
 
