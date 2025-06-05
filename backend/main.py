@@ -105,6 +105,11 @@ class SaveAllPlaylistsRequest(BaseModel):
 # --- FastAPI endpoints
 
 
+def safe_b64decode(data: str):
+    padding = '=' * (-len(data) % 4)  # Add missing padding if needed
+    return base64.urlsafe_b64decode(data + padding).decode()
+
+
 @app.get("/login")
 async def login(redirect_uri: str = Query(...)):
     state_payload = json.dumps({"redirect_uri": redirect_uri})
@@ -143,34 +148,29 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
 @app.get("/callback")
 async def callback(request: Request):
-    import base64
-    import json
-
-    encoded_state = request.query_params.get("state")
     code = request.query_params.get("code")
+    state = request.query_params.get("state")
 
-    if not code or not encoded_state:
+    if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
     try:
-        decoded = base64.urlsafe_b64decode(encoded_state).decode()
-        redirect_uri = json.loads(decoded)["redirect_uri"]
+        decoded_state = safe_b64decode(state)
+        redirect_uri = json.loads(decoded_state)["redirect_uri"]
+        print(f"✅ Extracted redirect_uri from state: {redirect_uri}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to decode state: {e}")
-
-    print(f"🌀 Using redirect_uri from state: {redirect_uri}")
-
-    sp_oauth = get_spotify_oauth(redirect_uri)
+        print(f"❌ Failed to decode state: {e}")
+        raise HTTPException(status_code=400, detail=f"State decode error: {e}")
 
     try:
+        sp_oauth = get_spotify_oauth(redirect_uri)
         token_info = sp_oauth.get_access_token(code, as_dict=True)
+        sp = spotipy.Spotify(auth=token_info["access_token"])
+        profile = sp.current_user()
+        user_id = profile.get("id")
     except Exception as e:
-        print(f"❌ Token exchange failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
-    profile = sp.current_user()
-    user_id = profile.get("id")
+        print(f"❌ Token exchange or user fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal callback error: {e}")
 
     if not user_id:
         raise HTTPException(status_code=400, detail="Spotify user ID missing.")
@@ -187,7 +187,8 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    # Set cookie and redirect
+    frontend_base = os.getenv("DEV_BASE_URL") if os.getenv("NODE_ENV") == "development" else os.getenv("PRO_BASE_URL")
+
     html = f"""
     <!DOCTYPE html>
     <html>
