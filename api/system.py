@@ -39,22 +39,3 @@ def get_backend_status():
         "mongo": db_status,
         "timestamp": datetime.utcnow().isoformat(),
     }
-
-
-@router.post("/set-cookie")
-def set_cookie_route(data: dict):
-    user_id = data.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="Missing user_id")
-
-    response = JSONResponse({"message": "cookie set"})
-    response.set_cookie(
-        key="sinatra_user_id",
-        value=user_id,
-        httponly=True,
-        secure=True,
-        samesite="None",
-        path="/",
-        max_age=3600 * 24 * 7,
-    )
-    return response

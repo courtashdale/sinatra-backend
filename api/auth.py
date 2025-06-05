@@ -5,6 +5,7 @@ import base64, json, os
 import spotipy
 from backend.utils import get_spotify_oauth
 from db.mongo import users_collection
+from services.token import refresh_user_token
 
 router = APIRouter(tags=["auth"])
 
@@ -91,30 +92,7 @@ def refresh_token(refresh_token: str = Query(...)):
         "expires_in": refreshed["expires_in"],
     }
 
-@router.get("/refresh-session", tags=["routes"])
+
+@router.get("/refresh-session")
 def refresh_session(user_id: str = Query(...)):
-    user = users_collection.find_one({"user_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    token_info = {
-        "access_token": user["access_token"],
-        "refresh_token": user["refresh_token"],
-        "expires_at": user["expires_at"],
-    }
-    sp_oauth = get_spotify_oauth()
-    if sp_oauth.is_token_expired(token_info):
-        refreshed = sp_oauth.refresh_access_token(user["refresh_token"])
-        users_collection.update_one(
-            {"user_id": user_id},
-            {
-                "$set": {
-                    "access_token": refreshed["access_token"],
-                    "refresh_token": refreshed["refresh_token"],
-                    "expires_at": refreshed["expires_at"],
-                }
-            },
-        )
-        return {"status": "refreshed"}
-
-    return {"status": "ok"}
+    return refresh_user_token(user_id)
