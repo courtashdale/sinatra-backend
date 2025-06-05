@@ -34,6 +34,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import Body
 from spotipy.oauth2 import SpotifyOAuth
 from fastapi import Request, HTTPException
+from fastapi.responses import HTMLResponse
+
 
 # -- backend
 from backend.utils import get_spotify_oauth, get_artist_genres
@@ -189,17 +191,17 @@ async def callback(request: Request):
     )
 
     # ✅ Set cookie and redirect
-    response = RedirectResponse(f"{frontend_base}/home")  # or "/" if that’s your landing page
-    response.set_cookie(
-        key="sinatra_user_id",
-        value=user_id,
-        httponly=True,
-        secure=True,
-        samesite="None",  # Required for cross-site cookies
-        path="/",
-        domain=".sinatra.live",  # Important: allows subdomain access from frontend/backend
-        max_age=3600 * 24 * 7,
-    )
+    response = HTMLResponse(f"""
+        <html>
+            <head><title>Redirecting...</title></head>
+            <body>
+                <script>
+                    document.cookie = "sinatra_user_id={user_id}; path=/; domain=.sinatra.live; max-age=604800; SameSite=None; Secure";
+                    window.location.href = "{frontend_base}/home";
+                </script>
+            </body>
+        </html>
+    """)
     return response
 
 @app.get("/recently-played", tags=["playback"])
