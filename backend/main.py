@@ -105,11 +105,8 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 
 @app.get("/login")
-async def login(request: Request):
+async def login(request: Request, redirect_uri: str = Query(...)):
     state = secrets.token_urlsafe(16)
-    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
-    print("🔒 Using redirect_uri:", redirect_uri)
-
     sp_oauth = get_spotify_oauth(redirect_uri)
     auth_url = sp_oauth.get_authorize_url(state=state)
     return RedirectResponse(auth_url)
