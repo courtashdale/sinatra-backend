@@ -3,15 +3,23 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 import base64, json, os
 import spotipy
+
 from services.spotify_auth import get_spotify_oauth
 from db.mongo import users_collection
 from services.token import refresh_user_token
 
 router = APIRouter(tags=["auth"])
 
+NODE_ENV = os.getenv("NODE_ENV", "development").lower()
+IS_DEV = NODE_ENV == "development"
+
+DEV_BASE_URL = os.getenv("DEV_BASE_URL", "http://localhost:5173")
+PRO_BASE_URL = os.getenv("PRO_BASE_URL", "https://sinatra.live")
+CALLBACK_URL = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
+
 
 def safe_b64decode(data: str):
-    padding = '=' * (-len(data) % 4)
+    padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding).decode()
 
 
@@ -66,20 +74,29 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    frontend_base = os.getenv("DEV_BASE_URL") if os.getenv("NODE_ENV") == "development" else os.getenv("PRO_BASE_URL")
+    # Cookie setup
+    cookie_line = f"document.cookie = 'sinatra_user_id={user_id}; path=/; max-age=604800;"
+    if not IS_DEV:
+        cookie_line += " domain=.sinatra.live; SameSite=None; Secure';"
+    else:
+        cookie_line += " SameSite=Lax';"
+
+    frontend_base = DEV_BASE_URL if IS_DEV else PRO_BASE_URL
+    redirect_url = f"{frontend_base}/home"
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script>
-            document.cookie = "sinatra_user_id={user_id}; path=/; domain=.sinatra.live; max-age=604800; SameSite=None; Secure";
-            window.location.href = "{frontend_base}/home";
+            {cookie_line}
+            window.location.href = "{redirect_url}";
         </script>
     </head>
     <body></body>
     </html>
     """
+
     return HTMLResponse(content=html)
 
 

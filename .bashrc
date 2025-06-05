@@ -1,1 +1,1 @@
-alias run="uvicorn backend.main:app --reload"
+alias run="uvicorn main:app --reload"
