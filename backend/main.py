@@ -191,6 +191,7 @@ async def callback(request: Request):
         secure=True,
         samesite="None",
         max_age=3600 * 24 * 7,
+        domain=".sinatra.live",
         path="/",
     )
     print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
