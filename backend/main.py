@@ -139,8 +139,11 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
 
 @app.get("/callback")
-async def callback(request: Request, redirect_uri: str = Query(...)):
+async def callback(request: Request):
+    IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
+    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
     frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
+
     code = request.query_params.get("code")
     state = request.query_params.get("state")
 
@@ -166,7 +169,6 @@ async def callback(request: Request, redirect_uri: str = Query(...)):
     if not user_id:
         raise HTTPException(status_code=400, detail="Spotify user ID missing.")
 
-    # Save tokens
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -179,7 +181,7 @@ async def callback(request: Request, redirect_uri: str = Query(...)):
         upsert=True,
     )
 
-    # Return HTML that sets the cookie
+    # Set cookie and redirect
     html = f"""
     <!DOCTYPE html>
     <html>
