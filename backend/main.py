@@ -139,42 +139,34 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
 
 @app.get("/callback")
-async def callback(request: Request):
-    IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
-    redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
+async def callback(request: Request, redirect_uri: str = Query(...)):
     frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
-
-    print(f"🔒 Using redirect_uri: {redirect_uri}")
-    print(f"🧭 Frontend base: {frontend_base}")
-
     code = request.query_params.get("code")
     state = request.query_params.get("state")
+
+    print(f"🌀 Received code: {code}")
     print(f"🌀 Received state: {state}")
+    print(f"🔒 Using redirect_uri: {redirect_uri}")
 
     if not code:
-        print("❌ /callback missing code")
         raise HTTPException(status_code=400, detail="Missing authorization code.")
 
     sp_oauth = get_spotify_oauth(redirect_uri)
 
     try:
         token_info = sp_oauth.get_access_token(code, as_dict=True)
-        access_token = token_info["access_token"]
     except Exception as e:
-        print("❌ Token exchange failed:", e)
+        print(f"❌ Token exchange failed: {e}")
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
 
-    sp = spotipy.Spotify(auth=access_token)
+    sp = spotipy.Spotify(auth=token_info["access_token"])
     profile = sp.current_user()
     user_id = profile.get("id")
 
     if not user_id:
-        print("❌ Failed to extract user_id from profile")
         raise HTTPException(status_code=400, detail="Spotify user ID missing.")
 
-    print(f"🎯 /callback resolved Spotify user_id = {user_id} — setting cookie")
-
-    # 💾 Save tokens
+    # Save tokens
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -187,19 +179,20 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    # ✅ Set cookie and redirect
-    response = HTMLResponse(f"""
-        <html>
-            <head><title>Redirecting...</title></head>
-            <body>
-                <script>
-                    document.cookie = "sinatra_user_id={user_id}; path=/; domain=.sinatra.live; max-age=604800; SameSite=None; Secure";
-                    window.location.href = "{frontend_base}/home";
-                </script>
-            </body>
-        </html>
-    """)
-    return response
+    # Return HTML that sets the cookie
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script>
+            document.cookie = "sinatra_user_id={user_id}; path=/; domain=.sinatra.live; max-age=604800; SameSite=None; Secure";
+            window.location.href = "{frontend_base}/home";
+        </script>
+    </head>
+    <body></body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
