@@ -17,3 +17,7 @@ class PlaylistID(BaseModel):
 class SaveAllPlaylistsRequest(BaseModel):
     user_id: str
     playlists: List[PlaylistID]
+
+class FeaturedPlaylistsUpdateRequest(BaseModel):
+    user_id: str
+    playlist_ids: List[str]

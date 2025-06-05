@@ -1,7 +1,7 @@
 # services/genre.py
 import json, os
 from collections import defaultdict
-from backend.music import genre_wizard
+from services.music import wizard
 from music.meta_gradients import get_gradient_for_genre
 
 
@@ -15,8 +15,8 @@ def load_genre_map():
 
 
 def analyze_genres(flat_genres: list) -> dict:
-    raw_highest = genre_wizard.genre_highest(flat_genres)
-    sub_genres_raw = genre_wizard.genre_frequency(flat_genres)
+    raw_highest = wizard.genre_highest(flat_genres)
+    sub_genres_raw = wizard.genre_frequency(flat_genres)
 
     meta_total = sum(raw_highest.values()) or 1
     meta_genres = {

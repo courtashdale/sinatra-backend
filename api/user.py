@@ -90,7 +90,7 @@ def register_user(data: dict = Body(...)):
 
     # Optional: trigger last_played and genre analysis (import locally)
     try:
-        from backend.music.genre_wizard import genre_highest
+        from services.music.wizard import genre_highest
         from api.genres import get_genres
 
         playback = sp.current_playback()

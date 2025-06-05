@@ -1,7 +1,7 @@
 # api/playlists.py
 from fastapi import APIRouter, Query, HTTPException, Body
 from models.shared import CookiePayload, UserIdPayload, OnboardingPayload
-from models.playlists import PlaylistSummary, PlaylistID, SaveAllPlaylistsRequest
+from models.playlists import PlaylistSummary, PlaylistID, SaveAllPlaylistsRequest, FeaturedPlaylistsUpdateRequest
 from typing import List
 import spotipy
 
@@ -9,17 +9,6 @@ from db.mongo import users_collection, playlists_collection
 from services.token import get_token
 
 router = APIRouter(tags=["playlists"])
-
-
-# --- Models (for now, keep inline)
-class PlaylistID(BaseModel):
-    id: str
-
-
-class SaveAllPlaylistsRequest(BaseModel):
-    user_id: str
-    playlists: List[PlaylistID]
-
 
 @router.get("/playlists")
 def get_playlists(
@@ -105,7 +94,7 @@ def delete_playlists(data: SaveAllPlaylistsRequest):
 
 
 @router.post("/update-featured")
-def update_featured_playlists(data: dict = Body(...)):
+def update_featured_playlists(data: FeaturedPlaylistsUpdateRequest):
     user_id = data.get("user_id")
     playlist_ids = data.get("playlist_ids")
 

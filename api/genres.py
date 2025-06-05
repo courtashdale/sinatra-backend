@@ -3,9 +3,12 @@ from fastapi import APIRouter, Query, HTTPException
 from db.mongo import users_collection
 from services.token import get_token
 from services.spotify_auth import get_spotify_oauth
-from music import genre_wizard
-from music.meta_gradients import get_gradient_for_genre
+from services.music import wizard
+from services.music import meta_gradients
 from datetime import datetime, timezone
+from services.music.wizard import get_gradient_for_genre
+
+
 import os, json, traceback
 
 router = APIRouter(tags=["genres"])
@@ -40,8 +43,8 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
         print("🎯 Combined raw genres from top 100 artists:", flat_genres[:20])
 
-        raw_highest = genre_wizard.genre_highest(flat_genres)
-        sub_genres_raw = genre_wizard.genre_frequency(flat_genres)
+        raw_highest = wizard.genre_highest(flat_genres)
+        sub_genres_raw = wizard.genre_frequency(flat_genres)
 
         total = sum(raw_highest.values()) or 1
         meta_genres = {
