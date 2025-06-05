@@ -964,7 +964,6 @@ def set_cookie_route(data: CookiePayload):
         httponly=True,
         secure=True,
         samesite="None",
-        domain=".sinatra.live",
         path="/",
         max_age=3600 * 24 * 7,
     )
