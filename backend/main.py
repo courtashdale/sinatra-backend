@@ -184,18 +184,7 @@ async def callback(request: Request):
     )
 
     # ✅ Set cookie and redirect
-    response = RedirectResponse(f"{frontend_base}/")
-    response.set_cookie(
-        key="sinatra_user_id",
-        value=user_id,
-        httponly=True,
-        secure=True,
-        samesite="None",
-        max_age=3600 * 24 * 7,
-        domain=".sinatra.live",
-        path="/",
-    )
-    print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
+    response = RedirectResponse(f"{frontend_base}/?user_id={user_id}")
     return response
 
 @app.get("/recently-played", tags=["playback"])
@@ -959,4 +948,17 @@ def get_vercel_status():
         }
     
 
-from fastapi.staticfiles import StaticFiles
+@app.post("/set-cookie")
+def set_cookie_route(user_id: str):
+    response = JSONResponse({"message": "cookie set"})
+    response.set_cookie(
+        key="sinatra_user_id",
+        value=user_id,
+        httponly=True,
+        secure=True,
+        samesite="None",
+        domain=".sinatra.live",
+        max_age=3600 * 24 * 7,
+        path="/",
+    )
+    return response
