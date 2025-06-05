@@ -66,6 +66,9 @@ app.add_middleware(
 
 # ---- Classes
 
+class CookiePayload(BaseModel):
+    user_id: str
+
 
 class UserIdPayload(BaseModel):
     user_id: str
@@ -904,11 +907,11 @@ VERCEL_TEAM = os.getenv("VERCEL_TEAM")
 @app.get("/vercel-status")
 def get_vercel_status():
     base_url = "https://api.vercel.com"
-    headers = {"Authorization": f"Bearer {VERCEL_API_TOKEN}"}
+    headers = {"Authorization": f"Bearer {VERCEL_TOKEN}"}
 
     try:
         # Step 1: Get most recent deployment
-        deployments_url = f"{base_url}/v6/deployments?projectId={VERCEL_PROJECT_ID}&teamId={VERCEL_TEAM}&limit=1"
+        deployments_url = f"{base_url}/v6/deployments?projectId={VERCEL_PROJECT}&teamId={VERCEL_TEAM}&limit=1"
         deployments_res = requests.get(deployments_url, headers=headers)
         deployments_res.raise_for_status()
         deployments_data = deployments_res.json()
@@ -949,16 +952,16 @@ def get_vercel_status():
     
 
 @app.post("/set-cookie")
-def set_cookie_route(user_id: str):
+def set_cookie_route(data: CookiePayload):
     response = JSONResponse({"message": "cookie set"})
     response.set_cookie(
         key="sinatra_user_id",
-        value=user_id,
+        value=data.user_id,
         httponly=True,
         secure=True,
         samesite="None",
         domain=".sinatra.live",
-        max_age=3600 * 24 * 7,
         path="/",
+        max_age=3600 * 24 * 7,
     )
     return response
