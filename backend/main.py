@@ -5,6 +5,7 @@ import os
 import spotipy
 import json
 import requests
+import logging
 from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
@@ -196,7 +197,6 @@ async def callback(request: Request):
     )
     print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
     return response
-
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
@@ -914,21 +914,51 @@ VERCEL_TEAM = os.getenv("VERCEL_TEAM")
 
 @app.get("/vercel-status")
 def get_vercel_status():
-    headers = {"Authorization": f"Bearer {VERCEL_TOKEN}"}
-    url = f"https://api.vercel.com/v6/deployments?projectId={VERCEL_PROJECT}&teamId={VERCEL_TEAM}"
+    base_url = "https://api.vercel.com"
+    headers = {"Authorization": f"Bearer {VERCEL_API_TOKEN}"}
 
     try:
-        res = requests.get(url, headers=headers)
-        data = res.json()
+        # Step 1: Get most recent deployment
+        deployments_url = f"{base_url}/v6/deployments?projectId={VERCEL_PROJECT_ID}&teamId={VERCEL_TEAM}&limit=1"
+        deployments_res = requests.get(deployments_url, headers=headers)
+        deployments_res.raise_for_status()
+        deployments_data = deployments_res.json()
 
-        if "deployments" not in data or not data["deployments"]:
+        if not deployments_data.get("deployments"):
             return {"vercel": "no deployments"}
 
-        latest = data["deployments"][0]
-        state = latest.get("state")
-        url = latest.get("url")
+        latest = deployments_data["deployments"][0]
+        deployment_id = latest["uid"]
+        deployment_url = latest["url"]
+        short_state = latest["state"]
 
-        return {"vercel": state, "deploymentUrl": f"https://{url}" if url else None}
+        # Step 2: Get detailed deployment info
+        deployment_detail_url = f"{base_url}/v13/deployments/{deployment_id}?teamId={VERCEL_TEAM}"
+        detail_res = requests.get(deployment_detail_url, headers=headers)
+        detail_res.raise_for_status()
+        detail_data = detail_res.json()
+        long_state = detail_data.get("readyState")
+
+        # Step 3: Optionally fetch logs (comment out if not needed)
+        logs_url = f"{base_url}/v2/deployments/{deployment_id}/events?teamId={VERCEL_TEAM}&limit=5"
+        logs_res = requests.get(logs_url, headers=headers)
+        logs = logs_res.json().get("events", [])
+
+        return {
+            "vercel": long_state,
+            "deploymentUrl": f"https://{deployment_url}",
+            "shortState": short_state,
+            "logs": logs,
+        }
 
     except Exception as e:
-        return {"vercel": "error", "detail": str(e)}
+        logging.exception("❌ Error fetching Vercel deployment status")
+        return {
+            "vercel": "error",
+            "detail": str(e),
+        }
+    
+
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
