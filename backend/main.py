@@ -4,6 +4,7 @@
 import os
 import spotipy
 import json
+import requests
 from spotipy.exceptions import SpotifyException
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timezone
@@ -14,7 +15,15 @@ from pathlib import Path
 from typing import List
 
 # -- fastAPI
-from fastapi import FastAPI, Depends, Query, HTTPException, Body, HTTPException
+from fastapi import (
+    FastAPI,
+    Depends,
+    Query,
+    HTTPException,
+    Body,
+    HTTPException,
+    APIRouter,
+)
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi import Response
 import secrets
@@ -41,7 +50,7 @@ BASE_URL = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
 # -- website
 origins = [
     "http://localhost:5173",  # local dev
-    "https://sinatra.live",   # custom domain
+    "https://sinatra.live",  # custom domain
     "https://sinatra.vercel.app",  # optional fallback
 ]
 
@@ -56,8 +65,10 @@ app.add_middleware(
 
 # ---- Classes
 
+
 class UserIdPayload(BaseModel):
     user_id: str
+
 
 class OnboardingPayload(BaseModel):
     user_id: str
@@ -65,14 +76,17 @@ class OnboardingPayload(BaseModel):
     profile_picture: str
     playlist_ids: List[str]
 
+
 class PlaylistSummary(BaseModel):
     id: str
     name: str
     image: str
     tracks: int
 
+
 class PlaylistID(BaseModel):
     id: str
+
 
 class SaveAllPlaylistsRequest(BaseModel):
     user_id: str
@@ -80,6 +94,7 @@ class SaveAllPlaylistsRequest(BaseModel):
 
 
 # --- FastAPI endpoints
+
 
 @app.get("/login")
 async def login(request: Request):
@@ -91,19 +106,23 @@ async def login(request: Request):
     auth_url = sp_oauth.get_authorize_url(state=state)
     return RedirectResponse(auth_url)
 
+
 @app.get("/user-playlists", tags=["user"])
 def get_user_playlists(user_id: str = Query(...)):
     from backend.db import playlists_collection
 
     doc = playlists_collection.find_one({"user_id": user_id})
     if not doc:
-        raise HTTPException(status_code=404, detail="No synced playlists found for user.")
+        raise HTTPException(
+            status_code=404, detail="No synced playlists found for user."
+        )
 
     return {
         "user_id": doc["user_id"],
         "last_updated": doc.get("last_updated"),
-        "playlists": doc.get("playlists", [])
+        "playlists": doc.get("playlists", []),
     }
+
 
 @app.get("/all-playlists", tags=["user"])
 def get_all_user_playlists(user_id: str = Query(...)):
@@ -113,15 +132,19 @@ def get_all_user_playlists(user_id: str = Query(...)):
 
     return user["playlists.all"]
 
+
 @app.get("/callback")
 async def callback(request: Request):
     IS_DEV = os.getenv("NODE_ENV", "development").lower() == "development"
     redirect_uri = os.getenv("DEV_CALLBACK") if IS_DEV else os.getenv("PRO_CALLBACK")
     frontend_base = os.getenv("DEV_BASE_URL") if IS_DEV else os.getenv("PRO_BASE_URL")
+
     print(f"🔒 Using redirect_uri: {redirect_uri}")
+    print(f"🧭 Frontend base: {frontend_base}")
 
     code = request.query_params.get("code")
     state = request.query_params.get("state")
+    print(f"🌀 Received state: {state}")
 
     if not code:
         print("❌ /callback missing code")
@@ -138,11 +161,15 @@ async def callback(request: Request):
 
     sp = spotipy.Spotify(auth=access_token)
     profile = sp.current_user()
-    user_id = profile["id"]
+    user_id = profile.get("id")
+
+    if not user_id:
+        print("❌ Failed to extract user_id from profile")
+        raise HTTPException(status_code=400, detail="Spotify user ID missing.")
 
     print(f"🎯 /callback resolved Spotify user_id = {user_id} — setting cookie")
 
-    # 💾 Save token info
+    # 💾 Save tokens
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -155,18 +182,20 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    # ✅ Set secure, HTTP-only cookie
+    # ✅ Set cookie and redirect
     response = RedirectResponse(f"{frontend_base}/auth")
     response.set_cookie(
         key="sinatra_user_id",
         value=user_id,
         httponly=True,
-        secure=not IS_DEV,
+        secure=True,
         samesite="None",
-        max_age=3600 * 24 * 7  # 7 days
+        max_age=3600 * 24 * 7,
+        path="/",
     )
     print(f"🍪 Cookie set: sinatra_user_id = {user_id} (secure={not IS_DEV})")
     return response
+
 
 @app.get("/recently-played", tags=["playback"])
 def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
@@ -199,6 +228,7 @@ def get_recently_played(access_token: str = Depends(get_token), limit: int = 1):
     except Exception as e:
         print(f"⚠️ Recently played error: {e}")
         return {"recently_played": False}
+
 
 @app.get("/playback", tags=["playback"])
 def get_playback_state(
@@ -275,11 +305,12 @@ def get_current_user(request: Request):
         "registered": user.get("registered", False),
     }
 
+
 @app.get("/playlists", tags=["user"])
 def get_playlists(
     user_id: str = Query(...),
     limit: int = Query(50, ge=1, le=50),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
 ):
     access_token = get_token(user_id)
     sp = spotipy.Spotify(auth=access_token)
@@ -291,12 +322,13 @@ def get_playlists(
             "name": p["name"],
             "owner": p["owner"]["id"],
             "tracks": p["tracks"]["total"],
-            "image": p["images"][0]["url"] if p["images"] else None
+            "image": p["images"][0]["url"] if p["images"] else None,
         }
         for p in raw["items"]
     ]
 
     return {"items": playlists}
+
 
 @app.get("/users", tags=["user"])
 def get_users():
@@ -305,6 +337,7 @@ def get_users():
             {}, {"_id": 0, "user_id": 1, "display_name": 1, "email": 1}
         )
     )
+
 
 @app.get("/top-tracks", tags=["user"])
 def get_top_tracks(
@@ -334,6 +367,7 @@ def get_top_tracks(
 
     return {"top_tracks": simplified}
 
+
 @app.post("/play", tags=["playback"])
 def start_playback(access_token: str = Depends(get_token)):
     sp = spotipy.Spotify(auth=access_token)
@@ -346,6 +380,7 @@ def pause_playback(access_token: str = Depends(get_token)):
     sp = spotipy.Spotify(auth=access_token)
     sp.pause_playback()
     return {"status": "paused"}
+
 
 @app.get("/genres", tags=["user"])
 def get_genres(user_id: str = Query(...), refresh: bool = False):
@@ -361,7 +396,9 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         top_artists = []
         for offset in (0, 50):
             try:
-                batch = sp.current_user_top_artists(limit=50, offset=offset, time_range="short_term")
+                batch = sp.current_user_top_artists(
+                    limit=50, offset=offset, time_range="short_term"
+                )
                 top_artists.extend(batch.get("items", []))
             except Exception as e:
                 print(f"⚠️ Failed to fetch top artists at offset {offset}: {e}")
@@ -381,7 +418,7 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         meta_genres = {
             genre: {
                 "portion": round((count / total) * 100, 1),
-                "gradient": get_gradient_for_genre(genre)
+                "gradient": get_gradient_for_genre(genre),
             }
             for genre, count in raw_highest.items()
         }
@@ -404,22 +441,29 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
             sub_genres[genre] = {
                 "portion": portion,
                 "parent_genre": parent,
-                "gradient": get_gradient_for_genre(parent)
+                "gradient": get_gradient_for_genre(parent),
             }
 
         # Top sub-genre (ignore if it's the same as its meta-genre)
         sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])
-        top_sub = next((g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()), None)
+        top_sub = next(
+            (g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()),
+            None,
+        )
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
 
         result = {
-            "sub_genres": dict(sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])[:10]),
-            "meta_genres": dict(sorted(meta_genres.items(), key=lambda x: -x[1]["portion"])[:10]),
+            "sub_genres": dict(
+                sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])[:10]
+            ),
+            "meta_genres": dict(
+                sorted(meta_genres.items(), key=lambda x: -x[1]["portion"])[:10]
+            ),
             "top_subgenre": {
                 "sub_genre": top_sub,
                 "parent_genre": top_meta,
                 "gradient": get_gradient_for_genre(top_meta),
-            }
+            },
         }
 
         users_collection.update_one(
@@ -427,7 +471,7 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
             {
                 "$set": {
                     "genre_analysis": result,
-                    "genre_last_updated": datetime.now(timezone.utc)
+                    "genre_last_updated": datetime.now(timezone.utc),
                 }
             },
             upsert=True,
@@ -437,8 +481,10 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()  # 👈 This shows the exact error in your terminal
         raise HTTPException(status_code=500, detail=f"Genre analysis failed: {str(e)}")
+
 
 @app.get("/public-playlist/{playlist_id}", tags=["playlists"])
 def get_public_playlist(playlist_id: str):
@@ -463,7 +509,7 @@ def get_playlist_info(user_id: str = Query(...), playlist_id: str = Query(...)):
     }
 
 
-@app.delete("/delete-user",tags=["mongodb"])
+@app.delete("/delete-user", tags=["mongodb"])
 def delete_user(user_id: str = Query(...)):
     result = users_collection.delete_one({"user_id": user_id})
     if result.deleted_count == 0:
@@ -471,7 +517,7 @@ def delete_user(user_id: str = Query(...)):
     return {"status": "deleted"}
 
 
-@app.get("/refresh-session",tags=["routes"])
+@app.get("/refresh-session", tags=["routes"])
 def refresh_session(user_id: str = Query(...)):
     user = users_collection.find_one({"user_id": user_id})
     if not user:
@@ -499,6 +545,7 @@ def refresh_session(user_id: str = Query(...)):
 
     return {"status": "ok"}
 
+
 @app.get("/health", tags=["system"])
 def health_check():
     try:
@@ -506,6 +553,7 @@ def health_check():
         return {"status": "ok", "db": "connected"}
     except ConnectionFailure:
         return {"status": "error", "db": "disconnected"}
+
 
 @app.post("/admin/backfill-playlist-metadata", tags=["admin"])
 def backfill_playlist_metadata():
@@ -539,6 +587,7 @@ def backfill_playlist_metadata():
 
     return {"status": "ok", "users_updated": updated}
 
+
 @app.get("/dashboard")
 async def get_dashboard(request: Request):
     user_id = request.cookies.get("sinatra_user_id")
@@ -562,6 +611,7 @@ async def get_dashboard(request: Request):
         "last_played": doc.get("last_played", {}),
     }
 
+
 @app.get("/public-profile/{user_id}")
 def public_profile(user_id: str):
     user = users_collection.find_one({"user_id": user_id})
@@ -573,7 +623,8 @@ def public_profile(user_id: str):
     featured_ids = playlists.get("featured", [])
     all_playlists = playlists.get("all", [])
     featured = [
-        pl for pl in all_playlists
+        pl
+        for pl in all_playlists
         if pl.get("id") in featured_ids or pl.get("playlist_id") in featured_ids
     ]
 
@@ -586,6 +637,7 @@ def public_profile(user_id: str):
         "featured_playlists": featured,
     }
 
+
 @app.post("/add-playlists", tags=["user"])
 def add_playlists(data: SaveAllPlaylistsRequest):
     access_token = get_token(data.user_id)
@@ -596,13 +648,17 @@ def add_playlists(data: SaveAllPlaylistsRequest):
     for pl in data.playlists:
         try:
             playlist = sp.playlist(pl.id)
-            enriched.append({
-                "id": pl.id,
-                "name": playlist["name"],
-                "image": playlist["images"][0]["url"] if playlist["images"] else None,
-                "tracks": playlist["tracks"]["total"],
-                "external_url": playlist["external_urls"]["spotify"]
-            })
+            enriched.append(
+                {
+                    "id": pl.id,
+                    "name": playlist["name"],
+                    "image": (
+                        playlist["images"][0]["url"] if playlist["images"] else None
+                    ),
+                    "tracks": playlist["tracks"]["total"],
+                    "external_url": playlist["external_urls"]["spotify"],
+                }
+            )
         except Exception as e:
             print(f"⚠️ Failed to fetch metadata for playlist {pl.id}: {e}")
             continue
@@ -612,15 +668,12 @@ def add_playlists(data: SaveAllPlaylistsRequest):
 
     result = users_collection.update_one(
         {"user_id": data.user_id},
-        {
-            "$addToSet": {
-                "playlists.all": {"$each": enriched}
-            }
-        },
+        {"$addToSet": {"playlists.all": {"$each": enriched}}},
         upsert=True,
     )
 
     return {"status": "added", "modified_count": result.modified_count}
+
 
 @app.post("/update-featured", tags=["user"])
 def update_featured_playlists(data: dict):
@@ -645,12 +698,12 @@ def update_featured_playlists(data: dict):
     print("✅ Normalized featured playlist_ids:", normalized_ids)
 
     users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": {"playlists.featured": normalized_ids}}
+        {"user_id": user_id}, {"$set": {"playlists.featured": normalized_ids}}
     )
 
     print("💾 MongoDB update complete.\n")
     return {"status": "ok", "count": len(normalized_ids)}
+
 
 @app.post("/delete-playlists", tags=["user"])
 def delete_playlists(data: SaveAllPlaylistsRequest):
@@ -659,13 +712,7 @@ def delete_playlists(data: SaveAllPlaylistsRequest):
 
     result = users_collection.update_one(
         {"user_id": data.user_id},
-        {
-            "$pull": {
-                "playlists.all": {
-                    "id": {"$in": playlist_ids}  # <-- Fix is here
-                }
-            }
-        }
+        {"$pull": {"playlists.all": {"id": {"$in": playlist_ids}}}},  # <-- Fix is here
     )
 
     return {"status": "deleted", "deleted_count": result.modified_count}
@@ -678,11 +725,12 @@ def refresh_genre_analysis(payload: UserIdPayload):
     # Clear cached genre data
     users_collection.update_one(
         {"user_id": user_id},
-        {"$unset": {"genre_analysis": "", "genre_last_updated": ""}}
+        {"$unset": {"genre_analysis": "", "genre_last_updated": ""}},
     )
 
     # Trigger genre regeneration logic (equivalent to calling /genres?refresh=true)
     return get_genres(user_id=user_id, refresh=True)
+
 
 @app.get("/spotify-me", tags=["spotify"])
 def get_spotify_me(user_id: str = Query(...)):
@@ -693,8 +741,11 @@ def get_spotify_me(user_id: str = Query(...)):
         return me
     except SpotifyException as e:
         print(f"⚠️ Spotify /me error for {user_id}: {e}")
-        raise HTTPException(status_code=401, detail="Failed to fetch Spotify user profile.")
-    
+        raise HTTPException(
+            status_code=401, detail="Failed to fetch Spotify user profile."
+        )
+
+
 @app.post("/register", tags=["user"])
 def register_user(data: dict = Body(...)):
     user_id = data.get("user_id") or data.get("id")
@@ -713,13 +764,17 @@ def register_user(data: dict = Body(...)):
     for pl in selected_playlists:
         try:
             playlist = sp.playlist(pl["id"])
-            enriched.append({
-                "id": pl["id"],
-                "name": playlist["name"],
-                "image": playlist["images"][0]["url"] if playlist["images"] else None,
-                "tracks": playlist["tracks"]["total"],
-                "external_url": playlist["external_urls"]["spotify"]
-            })
+            enriched.append(
+                {
+                    "id": pl["id"],
+                    "name": playlist["name"],
+                    "image": (
+                        playlist["images"][0]["url"] if playlist["images"] else None
+                    ),
+                    "tracks": playlist["tracks"]["total"],
+                    "external_url": playlist["external_urls"]["spotify"],
+                }
+            )
         except Exception as e:
             print(f"⚠️ Failed to enrich playlist {pl['id']}: {e}")
             continue
@@ -734,14 +789,10 @@ def register_user(data: dict = Body(...)):
             "featured": featured_ids,
         },
         "created_at": datetime.utcnow(),
-        "registered": True
+        "registered": True,
     }
 
-    users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": user_doc},
-        upsert=True
-    )
+    users_collection.update_one({"user_id": user_id}, {"$set": user_doc}, upsert=True)
 
     # 🔁 Trigger playback analysis
     try:
@@ -756,11 +807,17 @@ def register_user(data: dict = Body(...)):
                     "artist": artist["name"],
                     "album": playback["item"]["album"]["name"],
                     "external_url": playback["item"]["external_urls"]["spotify"],
-                    "album_art_url": playback["item"]["album"]["images"][0]["url"] if playback["item"]["album"]["images"] else None,
-                    "genres": artist_data.get("genres", [])
+                    "album_art_url": (
+                        playback["item"]["album"]["images"][0]["url"]
+                        if playback["item"]["album"]["images"]
+                        else None
+                    ),
+                    "genres": artist_data.get("genres", []),
                 }
             }
-            users_collection.update_one({"user_id": user_id}, {"$set": {"last_played_track": track_data}})
+            users_collection.update_one(
+                {"user_id": user_id}, {"$set": {"last_played_track": track_data}}
+            )
     except Exception as e:
         print("⚠️ Playback fetch failed:", e)
 
@@ -771,6 +828,7 @@ def register_user(data: dict = Body(...)):
         print("⚠️ Genre analysis failed during registration:", e)
 
     return {"status": "success", "message": "User registered and initialized"}
+
 
 @app.post("/admin/sync_playlists", tags=["admin"])
 def sync_playlists(user_id: str = Query(...)):
@@ -798,14 +856,16 @@ def sync_playlists(user_id: str = Query(...)):
             if p["owner"]["id"] != spotify_user_id or p["tracks"]["total"] < 4:
                 continue
 
-            all_playlists.append({
-                "id": p["id"],
-                "name": p["name"],
-                "tracks": p["tracks"]["total"],
-                "owner_id": p["owner"]["id"],
-                "image": p["images"][0]["url"] if p["images"] else None,
-                "external_url": p["external_urls"]["spotify"]
-            })
+            all_playlists.append(
+                {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "tracks": p["tracks"]["total"],
+                    "owner_id": p["owner"]["id"],
+                    "image": p["images"][0]["url"] if p["images"] else None,
+                    "external_url": p["external_urls"]["spotify"],
+                }
+            )
 
         offset += limit
         total_fetched += len(items)
@@ -816,15 +876,58 @@ def sync_playlists(user_id: str = Query(...)):
             "$set": {
                 "user_id": user_id,
                 "playlists": all_playlists,
-                "last_updated": datetime.now(timezone.utc)
+                "last_updated": datetime.now(timezone.utc),
             }
         },
-        upsert=True
+        upsert=True,
     )
 
     return {
         "status": "ok",
         "user_id": user_id,
         "total_playlists_fetched": total_fetched,
-        "total_playlists_saved": len(all_playlists)
+        "total_playlists_saved": len(all_playlists),
     }
+
+
+@app.get("/status", tags=["status"])
+def get_backend_status():
+    try:
+        # Quick check on MongoDB connection
+        client.admin.command("ping")
+        db_status = "online"
+    except Exception:
+        db_status = "offline"
+
+    return {
+        "backend": "online",
+        "mongo": db_status,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+VERCEL_TOKEN = os.getenv("VERCEL_TOKEN")
+VERCEL_PROJECT = os.getenv("VERCEL_PROJECT")
+VERCEL_TEAM = os.getenv("VERCEL_TEAM")
+
+
+@app.get("/vercel-status")
+def get_vercel_status():
+    headers = {"Authorization": f"Bearer {VERCEL_TOKEN}"}
+    url = f"https://api.vercel.com/v6/deployments?projectId={VERCEL_PROJECT}&teamId={VERCEL_TEAM}"
+
+    try:
+        res = requests.get(url, headers=headers)
+        data = res.json()
+
+        if "deployments" not in data or not data["deployments"]:
+            return {"vercel": "no deployments"}
+
+        latest = data["deployments"][0]
+        state = latest.get("state")
+        url = latest.get("url")
+
+        return {"vercel": state, "deploymentUrl": f"https://{url}" if url else None}
+
+    except Exception as e:
+        return {"vercel": "error", "detail": str(e)}

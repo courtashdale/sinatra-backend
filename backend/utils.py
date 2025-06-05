@@ -5,6 +5,7 @@ from spotipy.oauth2 import SpotifyOAuth
 # Only load .env locally — Railway will have NODE_ENV set
 if os.getenv("NODE_ENV", "").strip().lower() != "production":
     from dotenv import load_dotenv
+
     load_dotenv()
 
 NODE_ENV = os.getenv("NODE_ENV", "").strip().lower()
@@ -33,6 +34,7 @@ for var in required_env_vars:
 
 CALLBACK_URL = os.getenv(CALLBACK_KEY)
 
+
 def get_spotify_oauth(redirect_uri: str = None):
     return SpotifyOAuth(
         client_id=os.getenv("SPOTIFY_CLIENT_ID"),
@@ -40,8 +42,9 @@ def get_spotify_oauth(redirect_uri: str = None):
         redirect_uri=redirect_uri or os.getenv("PRO_CALLBACK"),
         scope="user-read-private user-read-email user-top-read user-read-recently-played user-read-playback-state streaming playlist-read-private",
         cache_path=None,
-        show_dialog=True
+        show_dialog=True,
     )
+
 
 def get_artist_genres(sp, artists, cache):
     genres = set()

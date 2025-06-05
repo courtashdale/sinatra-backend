@@ -2,6 +2,7 @@
 
 RUN = uvicorn backend.main:app --reload
 
+
 Sinatra Backend is a FastAPI-powered Python backend for a Spotify-powered music taste and playlist analysis web app. It connects to Spotify via OAuth, analyzes user listening habits, and provides genre breakdowns, playlist metadata, and user summaries. MongoDB is used for persistent storage, and the backend is designed for deployment on platforms like Railway or Heroku.
 
 ## Features

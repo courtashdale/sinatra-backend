@@ -11,19 +11,18 @@ with open(genre_map_path) as f:
     raw_map = json.load(f)
 
 # 🔁 Normalize keys and values
-GENRE_MAP = {
-    k.strip().lower(): v.strip().lower()
-    for k, v in raw_map.items()
-}
+GENRE_MAP = {k.strip().lower(): v.strip().lower() for k, v in raw_map.items()}
 
 # 🧠 Ensure all parent genres are mapped to themselves
 for parent in set(GENRE_MAP.values()):
     if parent not in GENRE_MAP:
         GENRE_MAP[parent] = parent
 
+
 def filter_sub_genres(genre_list):
     """Exclude any genre that is a known meta-genre."""
     return [g for g in genre_list if g.lower() not in META_GENRES]
+
 
 # Optional: Load meta-genres.json for is_meta_genre()
 meta_genre_path = os.path.join(os.path.dirname(__file__), "meta-genres.json")
@@ -35,6 +34,7 @@ else:
 
 UNCATEGORIZED_GENRES = defaultdict(int)
 
+
 def get_parent_genre(genre: str) -> str:
     genre_lc = genre.strip().lower()
     if genre_lc in GENRE_MAP:
@@ -44,13 +44,15 @@ def get_parent_genre(genre: str) -> str:
         logging.info(f"Unmapped genre: '{genre_lc}'")
         return "other"
 
+
 def is_meta_genre(name: str) -> bool:
     return name.lower() in META_GENRES
+
 
 def genre_frequency(genre_inputs, limit=20):
     if not isinstance(genre_inputs, list):
         raise ValueError("Expected a list of genres.")
-    
+
     frequency_counter = Counter()
     for genre in genre_inputs:
         genre_clean = genre.strip().lower()
@@ -59,6 +61,7 @@ def genre_frequency(genre_inputs, limit=20):
 
     top_genres = frequency_counter.most_common(limit)
     return dict(top_genres)
+
 
 def genre_highest(genre_inputs):
     if isinstance(genre_inputs, dict):
@@ -83,6 +86,7 @@ def genre_highest(genre_inputs):
             logging.info(f"  '{g}' → other (x{c})")
 
     return dict(sorted(result.items(), key=lambda item: item[1], reverse=True))
+
 
 def generate_user_summary(highest_genres: dict, total: int = None):
     if not highest_genres:

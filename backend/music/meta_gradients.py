@@ -22,5 +22,6 @@ gradients = {
     "other": "linear-gradient(to right, #000080, #2e3cae)",
 }
 
+
 def get_gradient_for_genre(name: str) -> str:
     return gradients.get(name.lower(), "linear-gradient(to right, #666, #999)")

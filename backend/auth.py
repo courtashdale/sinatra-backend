@@ -4,6 +4,7 @@ from fastapi import Query, HTTPException
 from backend.db import users_collection
 from backend.utils import get_spotify_oauth
 
+
 def get_token(user_id: str = Query(...)) -> str:
     user = users_collection.find_one({"user_id": user_id})
     if not user:
