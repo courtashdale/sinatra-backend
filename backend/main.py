@@ -960,5 +960,3 @@ def get_vercel_status():
     
 
 from fastapi.staticfiles import StaticFiles
-
-app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
