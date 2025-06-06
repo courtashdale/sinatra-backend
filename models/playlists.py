@@ -13,7 +13,6 @@ class PlaylistSummary(BaseModel):
 class PlaylistID(BaseModel):
     id: str
 
-
 class SaveAllPlaylistsRequest(BaseModel):
     user_id: str
     playlists: List[PlaylistID]

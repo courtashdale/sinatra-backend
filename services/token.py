@@ -1,9 +1,13 @@
 # services/token.py
-from fastapi import HTTPException
+from fastapi import HTTPException, Request, Depends
 from services.spotify_auth import get_spotify_oauth
 from db.mongo import users_collection
 
-def get_token(user_id: str) -> str:
+def get_token(request: Request) -> str:
+    user_id = request.cookies.get("sinatra_user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing sinatra_user_id cookie")
+
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found in database")
