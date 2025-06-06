@@ -30,6 +30,7 @@ def get_current_user(request: Request):
         "playlists.featured": user.get("playlists.featured", []),
         "genre_analysis": user.get("genre_analysis"),
         "registered": user.get("registered", False),
+        "last_played_track": user.get("last_played_track", {}).get("track"),  # ✅ ADD THIS
     }
 
 
