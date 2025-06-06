@@ -6,8 +6,8 @@ from pymongo.errors import ConnectionFailure
 from datetime import datetime
 import os, requests, logging
 
-router = APIRouter(tags=["system"])
 
+router = APIRouter(tags=["system"])
 
 @router.delete("/delete-user")
 def delete_user(user_id: str = Query(...)):

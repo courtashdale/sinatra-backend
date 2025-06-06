@@ -1,1 +1,0 @@
-alias run="uvicorn main:app --reload"
