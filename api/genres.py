@@ -7,12 +7,12 @@ from services.music import wizard
 from services.music import meta_gradients
 from datetime import datetime, timezone
 from services.music.wizard import get_gradient_for_genre
+from services.music.meta_gradients import gradients
 
 
 import os, json, traceback
 
 router = APIRouter(tags=["genres"])
-
 
 @router.get("/genres")
 def get_genres(user_id: str = Query(...), refresh: bool = False):
@@ -123,3 +123,7 @@ def refresh_genre_analysis(payload: dict):
     )
 
     return get_genres(user_id=user_id, refresh=True)
+
+@router.get("/meta-gradients")
+def get_meta_gradients():
+    return gradients
