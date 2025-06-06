@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from collections import defaultdict, Counter
+from .meta_gradients import gradients
 
 logging.basicConfig(level=logging.INFO)
 
@@ -107,3 +108,6 @@ def generate_user_summary(highest_genres: dict, total: int = None):
         detail = ""
 
     return f"🎧 You mostly listen to {primary} music ({primary_pct}%). {detail}"
+
+def get_gradient_for_genre(name: str) -> str:
+    return gradients.get(name.lower(), "linear-gradient(to right, #666, #999)")

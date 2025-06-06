@@ -21,3 +21,10 @@ tree.md
 .DS_Store
 settings.json
 csv2json.py
+
+__pycache__/
+*.pyc
+.env
+.vscode/
+.DS_Store
+static/dist/
