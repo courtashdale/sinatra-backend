@@ -36,4 +36,5 @@ api <--> db
 spotify --> api
 react --> ui
 api <--> auth
+ui --> react
 ```
