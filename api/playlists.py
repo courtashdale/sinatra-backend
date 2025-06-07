@@ -6,6 +6,7 @@ from typing import List
 import spotipy
 from fastapi import Request, Depends
 from services.token import get_token
+from models.playlists import FeaturedPlaylistsUpdateRequest
 
 from db.mongo import users_collection, playlists_collection
 from services.token import get_token
@@ -121,9 +122,9 @@ async def delete_playlists(
 
 
 @router.post("/update-featured")
-def update_featured_playlists(data: FeaturedPlaylistsUpdateRequest):
-    user_id = data.get("user_id")
-    playlist_ids = data.get("playlist_ids")
+def update_featured_playlists(data: FeaturedPlaylistsUpdateRequest = Body(...)):
+    user_id = data.user_id
+    playlist_ids = data.playlist_ids
 
     print(f"🔄 Incoming update-featured request for user: {user_id}")
     print(f"📦 Playlist IDs received: {playlist_ids}")
