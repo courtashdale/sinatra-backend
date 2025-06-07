@@ -4,32 +4,67 @@ from db.mongo import users_collection
 from services.token import get_token
 from datetime import datetime
 import spotipy
+from fastapi import APIRouter
+from db.mongo import client
+from datetime import datetime
+from pymongo.errors import ConnectionFailure
+import os, requests
+from fastapi import Request, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from db.mongo import users_collection, playlists_collection
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["user"])
 
 
-@router.get("/me")
-def get_current_user(request: Request):
-    user_id = request.cookies.get("sinatra_user_id")
-    print(f"🍪 /me cookie received: sinatra_user_id = {user_id}")
+# api/user.py
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
+from db.mongo import users_collection
+import spotipy
 
+router = APIRouter()
+
+@router.get("/me")
+def get_me(request: Request):
+    user_id = request.cookies.get("sinatra_user_id")
     if not user_id:
-        raise HTTPException(status_code=401, detail="Not logged in")
+        raise HTTPException(status_code=401, detail="Missing sinatra_user_id cookie")
 
     user = users_collection.find_one({"user_id": user_id})
-    if not user:
-        print(f"❌ /me user not found for user_id: {user_id}")
-        raise HTTPException(status_code=404, detail="User not found")
 
-    print(f"✅ /me success for user_id: {user_id}")
+    if not user or "display_name" not in user:
+        # Attempt auto-registration via Spotify API
+        try:
+            access_token = get_token(request)
+            sp = spotipy.Spotify(auth=access_token)
+            sp_user = sp.current_user()
+
+            display_name = sp_user["display_name"]
+            profile_image = (
+                sp_user["images"][0]["url"] if sp_user.get("images") else None
+            )
+
+            new_user = {
+                "user_id": user_id,
+                "display_name": display_name,
+                "profile_image_url": profile_image,
+                "theme": "default",
+            }
+            users_collection.update_one(
+                {"user_id": user_id}, {"$set": new_user}, upsert=True
+            )
+            return new_user
+
+        except Exception as e:
+            print(f"⚠️ Failed to auto-register user {user_id}: {e}")
+            raise HTTPException(status_code=404, detail="User not found and cannot be registered")
+
     return {
         "user_id": user["user_id"],
         "display_name": user["display_name"],
-        "email": user.get("email"),
-        "profile_picture": user.get("profile_picture"),
-        "playlists.featured": user.get("playlists.featured", []),
-        "genre_analysis": user.get("genre_analysis"),
-        "registered": user.get("registered", False),
+        "profile_image_url": user.get("profile_image_url"),
+        "theme": user.get("theme", "default"),
     }
 
 
@@ -124,3 +159,17 @@ def register_user(data: dict = Body(...)):
         print("⚠️ Genre analysis failed during registration:", e)
 
     return {"status": "success", "message": "User registered and initialized"}
+
+@router.delete("/delete-user")
+def delete_user(
+    request: Request,
+    user_id: str = Query(...),
+):
+    print(f"🗑️ Deleting user: {user_id}")
+
+    users_collection.delete_one({"user_id": user_id})
+    playlists_collection.delete_one({"user_id": user_id})
+
+    response = JSONResponse(content={"status": "deleted"})
+    response.delete_cookie("sinatra_user_id", path="/")
+    return response

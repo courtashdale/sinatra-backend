@@ -1,41 +1,45 @@
 # api/system.py
-from fastapi import APIRouter, Query, HTTPException
-from fastapi.responses import JSONResponse
-from db.mongo import users_collection, client
-from pymongo.errors import ConnectionFailure
+from fastapi import APIRouter
+from db.mongo import client
 from datetime import datetime
-import os, requests, logging
+from pymongo.errors import ConnectionFailure
+import os, requests
+from fastapi import Request, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from db.mongo import users_collection, playlists_collection
+from fastapi.responses import JSONResponse
 
 
 router = APIRouter(tags=["system"])
 
-@router.delete("/delete-user")
-def delete_user(user_id: str = Query(...)):
-    result = users_collection.delete_one({"user_id": user_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "deleted"}
-
-
-@router.get("/health")
-def health_check():
-    try:
-        client.admin.command("ping")
-        return {"status": "ok", "db": "connected"}
-    except ConnectionFailure:
-        return {"status": "error", "db": "disconnected"}
-
-
 @router.get("/status")
-def get_backend_status():
+def get_system_status():
+    # Mongo
     try:
         client.admin.command("ping")
-        db_status = "online"
+        mongo_status = "online"
+    except ConnectionFailure:
+        mongo_status = "offline"
+
+    # Spotify
+    try:
+        res = requests.get("https://api.spotify.com/v1", timeout=2)
+        spotify_status = "online" if res.status_code == 200 else "degraded"
     except Exception:
-        db_status = "offline"
+        spotify_status = "offline"
+
+    # Vercel (ping frontend)
+    frontend_url = os.getenv("PRO_FRONTEND_URL", "https://sinatra.live")
+    try:
+        res = requests.get(frontend_url, timeout=2)
+        vercel_status = "online" if res.status_code == 200 else "degraded"
+    except Exception:
+        vercel_status = "offline"
 
     return {
         "backend": "online",
-        "mongo": db_status,
-        "timestamp": datetime.utcnow().isoformat(),
+        "mongo": mongo_status,
+        "spotify": spotify_status,
+        "vercel_frontend": vercel_status,
+        "timestamp": datetime.utcnow().isoformat()
     }
