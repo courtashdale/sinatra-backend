@@ -8,20 +8,25 @@ from services.music import meta_gradients
 from datetime import datetime, timezone
 from services.music.wizard import get_gradient_for_genre
 from services.music.meta_gradients import gradients
-
+from fastapi import Request
 
 import os, json, traceback
 
 router = APIRouter(tags=["genres"])
 
+import json
+from pathlib import Path
+
+GENRE_MAP_PATH = Path(__file__).resolve().parent.parent / "services" / "music" / "genre-map.json"
+
 @router.get("/genres")
-def get_genres(user_id: str = Query(...), refresh: bool = False):
-    user = users_collection.find_one({"user_id": user_id})
-    if not refresh and user and "genre_analysis" in user:
-        return user["genre_analysis"]
+def get_genres(request: Request, refresh: bool = False):
+    user_id = request.cookies.get("sinatra_user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing sinatra_user_id cookie")
 
     try:
-        access_token = get_token(user_id)
+        access_token = get_token(request)
         import spotipy
         sp = spotipy.Spotify(auth=access_token)
 
@@ -56,12 +61,8 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         }
 
         try:
-            with open("backend/genres/2d_genres.csv") as f:
-                genre_map = {
-                    line.split(",")[0].strip().lower(): line.split(",")[1].strip().lower()
-                    for line in f.readlines()
-                    if "," in line
-                }
+            with open(GENRE_MAP_PATH) as f:
+                genre_map = json.load(f)
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to load genre map.")
 
@@ -79,7 +80,7 @@ def get_genres(user_id: str = Query(...), refresh: bool = False):
         sorted_subs = sorted(sub_genres.items(), key=lambda x: -x[1]["portion"])
         top_sub = next(
             (g for g, _ in sorted_subs if genre_map.get(g.lower(), "") != g.lower()),
-            None,
+            sorted_subs[0][0] if sorted_subs else None,
         )
         top_meta = genre_map.get(top_sub.lower(), "other") if top_sub else None
 
