@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query, Depends, HTTPException, Request
 import spotipy
 from db.mongo import users_collection
 from services.token import get_token
+from services.spotify import build_track_data
 
 router = APIRouter(tags=["playback"])
 
@@ -18,20 +19,16 @@ def get_playback_state(request: Request, access_token: str = Depends(get_token))
         playback = sp.current_playback()
 
         if playback and playback.get("item"):
-            track = playback["item"]
-            artist = track["artists"][0]
-            track_data = {
-                "id": track["id"],
-                "name": track["name"],
-                "artist": artist["name"],
-                "album": track["album"]["name"],
-                "external_url": track["external_urls"]["spotify"],
-                "album_art_url": track["album"]["images"][0]["url"] if track["album"].get("images") else None,
-            }
+            track_data = build_track_data(playback["item"], sp)
+
+            existing = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
+            if existing and existing.get("last_played_track", {}).get("id") == track_data["id"]:
+                print("🟡 Track already stored, skipping update.")
+                return {"status": "unchanged", "track": track_data}
 
             users_collection.update_one(
                 {"user_id": user_id},
-                {"$set": {"last_played_track": track_data}},
+                {"$set": {"last_played_track": track_data}}
             )
             return {"playback": track_data}
         else:
@@ -51,21 +48,19 @@ def get_recently_played(request: Request, access_token: str = Depends(get_token)
         if not recent["items"]:
             return {"track": None}
 
-        item = recent["items"][0]
-        track = item["track"]
-        artist = track["artists"][0]
-        artist_data = sp.artist(artist["id"])
-        genres = artist_data.get("genres", [])
+        track = recent["items"][0]["track"]
+        track_data = build_track_data(track, sp)
 
-        track_data = {
-            "id": track["id"],
-            "name": track["name"],
-            "artist": artist["name"],
-            "album": track["album"]["name"],
-            "external_url": track["external_urls"]["spotify"],
-            "album_art_url": track["album"]["images"][0]["url"] if track["album"].get("images") else None,
-            "genres": genres,
-        }
+        user_id = request.cookies.get("sinatra_user_id")
+        if user_id:
+            existing = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
+            if existing and existing.get("last_played_track", {}).get("id") == track_data["id"]:
+                print("🟡 Track already stored, skipping update.")
+                return {"status": "unchanged", "track": track_data}
+            users_collection.update_one(
+                {"user_id": user_id},
+                {"$set": {"last_played_track": track_data}}
+            )
 
         return {"track": track_data}
 
@@ -84,20 +79,8 @@ def now_playing(request: Request, access_token: str = Depends(get_token)):
             return {"track": None}
 
         track = current["item"]
-        artist = track["artists"][0]
-        artist_data = sp.artist(artist["id"])
-        genres = artist_data.get("genres", [])
-
-        track_data = {
-            "id": track["id"],
-            "name": track["name"],
-            "artist": artist["name"],
-            "album": track["album"]["name"],
-            "external_url": track["external_urls"]["spotify"],
-            "album_art_url": track["album"]["images"][0]["url"] if track["album"].get("images") else None,
-            "genres": genres,
-        }
-
+        track_data = build_track_data(track, sp)
+        
         return {"track": track_data}
 
     except Exception as e:
@@ -118,24 +101,16 @@ def update_playing(request: Request, access_token: str = Depends(get_token)):
         if not current or not current.get("item"):
             raise HTTPException(status_code=404, detail="Nothing is currently playing")
 
-        track = current["item"]
-        artist = track["artists"][0]
-        artist_data = sp.artist(artist["id"])
-        genres = artist_data.get("genres", [])
+        track_data = build_track_data(current["item"], sp)
 
-        track_data = {
-            "id": track["id"],
-            "name": track["name"],
-            "artist": artist["name"],
-            "album": track["album"]["name"],
-            "external_url": track["external_urls"]["spotify"],
-            "album_art_url": track["album"]["images"][0]["url"] if track["album"].get("images") else None,
-            "genres": genres,
-        }
+        existing = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
+        if existing and existing.get("last_played_track", {}).get("id") == track_data["id"]:
+            print("🟡 Track already stored, skipping update.")
+            return {"status": "unchanged", "track": track_data}
 
         users_collection.update_one(
             {"user_id": user_id},
-            {"$set": {"last_played_track": {"track": track_data}}}
+            {"$set": {"last_played_track": track_data}}
         )
 
         return {"status": "updated", "track": track_data}
@@ -152,5 +127,4 @@ def check_recent_track(request: Request):
         raise HTTPException(status_code=400, detail="Missing sinatra_user_id cookie")
 
     user = users_collection.find_one({"user_id": user_id})
-    last_track = user.get("last_played_track", {})
-    return {"track": last_track.get("track") or last_track}
+    return {"track": user.get("last_played_track")}

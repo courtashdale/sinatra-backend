@@ -32,5 +32,5 @@ def get_dashboard(request: Request):
             "featured": featured_playlists
         },
         "genres": doc.get("genres", {}),
-        "last_played": doc.get("last_played", {}),
+        "last_played": doc.get("last_played_track", {}),
     }
