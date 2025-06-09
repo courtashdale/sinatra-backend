@@ -1,10 +1,17 @@
 ```mermaid
 graph TD
+subgraph Hosting Services
+    vercel([▲ Vercel])
+    railway([🛤️ Railway])
+    web([www,sinatra.live])
+end
+
+user([👤 User])
+
 subgraph Backend
     api{FastAPI}
     cookie([Cookies])
     auth([Authentication])
-    
 end
 
 subgraph Cloud Services
@@ -37,4 +44,9 @@ spotify --> api
 react --> ui
 api <--> auth
 ui --> react
+api --> railway
+react --> vercel
+vercel --> web
+railway --> web
+web --> user
 ```

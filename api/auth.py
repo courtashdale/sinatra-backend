@@ -1,6 +1,6 @@
 # api/auth.py
 from fastapi import APIRouter, Request, Query, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 import base64, json, os
 import spotipy
 
@@ -62,6 +62,7 @@ async def callback(request: Request):
     if not user_id:
         raise HTTPException(status_code=400, detail="Spotify user ID missing.")
 
+    # Update or create user record
     users_collection.update_one(
         {"user_id": user_id},
         {
@@ -74,30 +75,23 @@ async def callback(request: Request):
         upsert=True,
     )
 
-    # Cookie setup
-    cookie_line = f"document.cookie = 'sinatra_user_id={user_id}; path=/; max-age=604800;"
-    if not IS_DEV:
-        cookie_line += " domain=.sinatra.live; SameSite=None; Secure';"
-    else:
-        cookie_line += " SameSite=Lax';"
-
+    # Build redirect response with secure, server-set cookie
     frontend_base = DEV_BASE_URL if IS_DEV else PRO_BASE_URL
     redirect_url = f"{frontend_base}/home"
+    response = RedirectResponse(url=redirect_url)
 
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script>
-            {cookie_line}
-            window.location.href = "{redirect_url}";
-        </script>
-    </head>
-    <body></body>
-    </html>
-    """
+    response.set_cookie(
+        key="sinatra_user_id",
+        value=user_id,
+        httponly=True,
+        secure=not IS_DEV,
+        samesite="None" if not IS_DEV else "Lax",
+        path="/",
+        max_age=3600 * 24 * 7,
+    )
 
-    return HTMLResponse(content=html)
+    print(f"🍪 Set sinatra_user_id cookie: {user_id}")
+    return response
 
 
 @router.get("/refresh_token")
@@ -113,3 +107,14 @@ def refresh_token(refresh_token: str = Query(...)):
 @router.get("/refresh-session")
 def refresh_session(user_id: str = Query(...)):
     return refresh_user_token(user_id)
+
+@router.get("/logout")
+def logout_user():
+    response = JSONResponse({"message": "Logged out"})
+    response.delete_cookie(
+        key="sinatra_user_id",
+        path="/",
+        samesite="None",  # Match what you used in login
+        secure=True        # Match what you used in login
+    )
+    return response
