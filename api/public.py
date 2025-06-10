@@ -21,3 +21,18 @@ def get_public_profile(user_id: str):
             if (pl.get("id") or pl.get("playlist_id")) in doc.get("playlists", {}).get("featured", [])
         ],
     }
+
+@router.get("/public-track/{user_id}")
+def get_public_track(user_id: str):
+    doc = users_collection.find_one({"user_id": user_id}, {"last_played": 1})
+    if not doc or not doc.get("last_played"):
+        raise HTTPException(status_code=404, detail="No public track found")
+
+    track = doc["last_played"]
+
+    # Ensure it has minimal required structure
+    required_keys = {"id", "name", "artist", "album", "album_art_url"}
+    if not isinstance(track, dict) or not required_keys.issubset(track.keys()):
+        raise HTTPException(status_code=422, detail="Track data is malformed")
+
+    return {"track": track}
