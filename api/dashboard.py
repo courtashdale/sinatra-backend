@@ -1,6 +1,7 @@
 # api/dashboard.py
 from fastapi import APIRouter, Request, HTTPException
 from db.mongo import users_collection
+from api.genres import get_genres
 
 router = APIRouter(tags=["dashboard"])
 
@@ -26,11 +27,13 @@ def get_dashboard(request: Request):
     featured_playlists = [playlist_lookup.get(pid) for pid in featured_ids if pid in playlist_lookup]
 
     print(f"✅ /dashboard success for user_id = {user_id}")
+    genres_data = get_genres(request)
+
     return {
         "playlists": {
             "all": all_playlists,
-            "featured": featured_playlists
+            "featured": featured_playlists,
         },
-        "genres": doc.get("genres", {}),
+        "genres": genres_data,
         "last_played": doc.get("last_played_track", {}),
     }
