@@ -2,7 +2,8 @@
 from fastapi import FastAPI
 from api import (
     auth, user, playlists, playback, genres, admin,
-    system, dashboard, cookie, vercel, admin, spotify, public
+    system, dashboard, cookie, vercel, admin, spotify, public,
+    ai
 )
 
 def include_routers(app: FastAPI):
@@ -18,3 +19,4 @@ def include_routers(app: FastAPI):
     app.include_router(vercel.router)
     app.include_router(spotify.router)
     app.include_router(public.router)
+    app.include_router(ai.router)
