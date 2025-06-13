@@ -14,10 +14,9 @@ def _build_profile_response(user_id: str):
     return {
         "user_id": doc.get("user_id"),
         "display_name": doc.get("display_name"),
-        "profile_picture": doc.get("profile_image_url")
-        or doc.get("profile_picture"),
+        "profile_picture": doc.get("profile_image_url") or doc.get("profile_picture"),
         "genres_data": doc.get("genres"),
-        "last_played_track": doc.get("last_played"),
+        "last_played_track": doc.get("last_played_track"),
         "featured_playlists": [
             pl
             for pl in doc.get("playlists", {}).get("all", [])
@@ -25,6 +24,7 @@ def _build_profile_response(user_id: str):
             in doc.get("playlists", {}).get("featured", [])
         ],
     }
+
 
 @router.get("/public-profile/{user_id}")
 def get_public_profile(user_id: str):
@@ -39,11 +39,11 @@ def get_public_profile_query(user_id: str = Query(...)):
 
 @router.get("/public-track/{user_id}")
 def get_public_track(user_id: str):
-    doc = users_collection.find_one({"user_id": user_id}, {"last_played": 1})
-    if not doc or not doc.get("last_played"):
+    doc = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
+    if not doc or not doc.get("last_played_track"):
         raise HTTPException(status_code=404, detail="No public track found")
 
-    track = doc["last_played"]
+    track = doc["last_played_track"]
 
     # Ensure it has minimal required structure
     required_keys = {"id", "name", "artist", "album", "album_art_url"}
