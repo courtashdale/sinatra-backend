@@ -40,12 +40,14 @@ def get_public_profile_query(user_id: str = Query(...)):
 @router.get("/public-track/{user_id}")
 def get_public_track(user_id: str):
     doc = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
-    if not doc or not doc.get("last_played_track"):
-        raise HTTPException(status_code=404, detail="No public track found")
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    track = doc["last_played_track"]
+    track = doc.get("last_played_track")
+    if not track:
+        # Gracefully indicate missing track rather than returning 404
+        return {"track": None}
 
-    # Ensure it has minimal required structure
     required_keys = {"id", "name", "artist", "album", "album_art_url"}
     if not isinstance(track, dict) or not required_keys.issubset(track.keys()):
         raise HTTPException(status_code=422, detail="Track data is malformed")
