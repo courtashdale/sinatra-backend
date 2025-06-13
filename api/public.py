@@ -53,3 +53,10 @@ def get_public_track(user_id: str):
         raise HTTPException(status_code=422, detail="Track data is malformed")
 
     return {"track": track}
+
+@router.get("/public-genres/{user_id}")
+def get_public_genres(user_id: str):
+    doc = users_collection.find_one({"user_id": user_id})
+    if not doc or "genre_analysis" not in doc:
+        raise HTTPException(status_code=404, detail="No genre data found")
+    return doc["genre_analysis"]
