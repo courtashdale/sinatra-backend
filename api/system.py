@@ -1,5 +1,5 @@
 # api/system.py
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from db.mongo import client
 from datetime import datetime
 from pymongo.errors import ConnectionFailure
@@ -7,7 +7,7 @@ import os, requests
 from fastapi import Request, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from db.mongo import users_collection, playlists_collection
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 
 router = APIRouter(tags=["system"])
@@ -43,3 +43,7 @@ def get_system_status():
         "vercel_frontend": vercel_status,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@router.get("/", response_class=PlainTextResponse, include_in_schema=False)
+def health_check():
+    return "Sinatra backend is alive."

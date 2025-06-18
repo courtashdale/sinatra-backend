@@ -11,4 +11,4 @@ jobs:
 
     steps:
       - name: Curl backend
-        run: curl --silent --show-error --fail https://backend.sinatra.live/
+        run: curl --silent --show-error --fail https://backend.sinatra.live/ 
