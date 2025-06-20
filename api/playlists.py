@@ -147,18 +147,6 @@ def update_featured_playlists(data: FeaturedPlaylistsUpdateRequest = Body(...)):
 
     return {"status": "ok", "count": len(normalized_ids)}
 
-
-@router.get("/public-playlist/{playlist_id}")
-def get_public_playlist(playlist_id: str):
-    match = users_collection.find_one(
-        {"playlists.all.playlist_id": playlist_id}, {"playlists.all.$": 1}
-    )
-    if not match or "playlists.all" not in match:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-
-    return match["playlists.all"][0]
-
-
 @router.get("/playlist-info")
 def get_playlist_info(user_id: str = Query(...), playlist_id: str = Query(...)):
     access_token = get_token(user_id)

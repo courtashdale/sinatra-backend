@@ -10,19 +10,26 @@ def _build_profile_response(user_id: str):
     doc = users_collection.find_one({"user_id": user_id})
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    playlists_data = doc.get("playlists", {})
+    all_playlists = playlists_data.get("all", [])
+    featured_ids = playlists_data.get("featured", [])
+
+    playlist_lookup = {pl.get("id") or pl.get("playlist_id"): pl for pl in all_playlists}
+    featured_playlists = [playlist_lookup.get(pid) for pid in featured_ids if pid in playlist_lookup]
+
+    genres_data = doc.get("genres_analysis") or doc.get("genres")
 
     return {
         "user_id": doc.get("user_id"),
         "display_name": doc.get("display_name"),
         "profile_picture": doc.get("profile_image_url") or doc.get("profile_picture"),
-        "genres_data": doc.get("genres"),
-        "last_played_track": doc.get("last_played_track"),
-        "featured_playlists": [
-            pl
-            for pl in doc.get("playlists", {}).get("all", [])
-            if (pl.get("id") or pl.get("playlist_id"))
-            in doc.get("playlists", {}).get("featured", [])
-        ],
+        "playlists": {
+            "all": all_playlists,
+            "featured": featured_playlists,
+        },
+        "genres": doc.get("genre_analysis"),
+        "last_played": doc.get("last_played_track", {}),
     }
 
 
