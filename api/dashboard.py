@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request, HTTPException
 from db.mongo import users_collection
 from api.genres import get_genres
+from services.music.track_utils import apply_meta_gradients
 
 router = APIRouter(tags=["dashboard"])
 
@@ -28,6 +29,7 @@ def get_dashboard(request: Request):
 
     print(f"✅ /dashboard success for user_id = {user_id}")
     genres_data = get_genres(request)
+    last_played = apply_meta_gradients(doc.get("last_played_track", {}))
 
     return {
         "playlists": {
@@ -35,5 +37,5 @@ def get_dashboard(request: Request):
             "featured": featured_playlists,
         },
         "genres": genres_data,
-        "last_played": doc.get("last_played_track", {}),
+        "last_played": last_played,
     }
