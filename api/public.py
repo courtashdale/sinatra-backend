@@ -5,9 +5,9 @@ from db.mongo import users_collection
 router = APIRouter(tags=["public"])
 
 
-def _build_profile_response(user_id: str):
+async def _build_profile_response(user_id: str):
     """Return the public profile document for the given user."""
-    doc = users_collection.find_one({"user_id": user_id})
+    doc = await users_collection.find_one({"user_id": user_id})
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -27,25 +27,28 @@ def _build_profile_response(user_id: str):
 
 
 @router.get("/public-profile/{user_id}")
-def get_public_profile(user_id: str):
-    """Fetch a user's public profile via path parameter."""
-    return _build_profile_response(user_id)
+async def get_public_profile(user_id: str):
+    return await _build_profile_response(user_id)
 
+@router.get("/public-playlists/{user_id}")
+async def get_public_playlists(user_id: str):
+    user = await users_collection.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user.get("playlists", {}).get("all", [])
 
 @router.get("/public-profile")
-def get_public_profile_query(user_id: str = Query(...)):
-    """Fetch a user's public profile via query parameter."""
-    return _build_profile_response(user_id)
+async def get_public_profile_query(user_id: str = Query(...)):
+    return await _build_profile_response(user_id)
 
 @router.get("/public-track/{user_id}")
-def get_public_track(user_id: str):
-    doc = users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
+async def get_public_track(user_id: str):
+    doc = await users_collection.find_one({"user_id": user_id}, {"last_played_track": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
 
     track = doc.get("last_played_track")
     if not track:
-        # Gracefully indicate missing track rather than returning 404
         return {"track": None}
 
     required_keys = {"id", "name", "artist", "album", "album_art_url"}
@@ -55,8 +58,8 @@ def get_public_track(user_id: str):
     return {"track": track}
 
 @router.get("/public-genres/{user_id}")
-def get_public_genres(user_id: str):
-    doc = users_collection.find_one({"user_id": user_id})
+async def get_public_genres(user_id: str):
+    doc = await users_collection.find_one({"user_id": user_id})
     if not doc or "genre_analysis" not in doc:
         raise HTTPException(status_code=404, detail="No genre data found")
     return doc["genre_analysis"]
