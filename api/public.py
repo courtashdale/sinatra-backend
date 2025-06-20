@@ -1,7 +1,6 @@
 # api/public.py
 from fastapi import APIRouter, HTTPException, Query
 from db.mongo import users_collection
-from services.music.track_utils import apply_meta_gradients
 
 router = APIRouter(tags=["public"])
 
@@ -19,7 +18,7 @@ def _build_profile_response(user_id: str):
     featured_playlists = [playlist_lookup.get(pid) for pid in featured_ids if pid in playlist_lookup]
 
     genres_data = doc.get("genres_analysis") or doc.get("genres")
-    last_played = apply_meta_gradients(doc.get("last_played_track", {}))
+    last_played = doc.get("last_played_track", {})
 
     return {
         "user_id": doc.get("user_id"),
